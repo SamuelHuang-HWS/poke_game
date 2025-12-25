@@ -1,0 +1,6 @@
+{"level":"error","message":"Error: ENOENT: no such file or directory, stat '/Users/eeo/Documents/trae_projects/poke_game/client/dist/index.html'","service":"poke-game","timestamp":"2025-12-22T03:46:16.049Z"}
+{"level":"error","message":"Error: ENOENT: no such file or directory, stat '/Users/eeo/Documents/trae_projects/poke_game/client/dist/index.html'","service":"poke-game","timestamp":"2025-12-22T03:48:09.215Z"}
+{"level":"error","message":"Error: ENOENT: no such file or directory, stat '/Users/eeo/Documents/trae_projects/poke_game/client/dist/index.html'","service":"poke-game","timestamp":"2025-12-22T05:30:28.136Z"}
+{"level":"error","message":"Error: ENOENT: no such file or directory, stat '/Users/eeo/Documents/trae_projects/poke_game/client/dist/index.html'","service":"poke-game","timestamp":"2025-12-23T09:15:24.240Z"}
+{"level":"error","message":"Error: ENOENT: no such file or directory, stat '/Users/eeo/Documents/trae_projects/poke_game/client/dist/index.html'","service":"poke-game","timestamp":"2025-12-23T09:15:46.899Z"}
+{"level":"error","message":"Error: ENOENT: no such file or directory, stat '/Users/eeo/Documents/trae_projects/poke_game/client/dist/index.html'","service":"poke-game","timestamp":"2025-12-25T11:26:54.664Z"}
