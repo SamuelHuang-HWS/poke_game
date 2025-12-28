@@ -2,6 +2,7 @@
 const Room = require("../models/Room");
 const User = require("../models/User");
 const { ROOM_STATUS, GAME_CONFIG } = require("../config/constants");
+const { v4: uuidv4 } = require("uuid");
 
 class RoomService {
   /**
@@ -17,32 +18,37 @@ class RoomService {
       throw new Error("创建者不存在");
     }
 
-    // 验证房间参数
-    if (roomData.defaultRoomGold < 1000) {
-      throw new Error("房间初始金币不能少于1000");
+    // 验证单注倍数
+    if (![1, 2, 5].includes(roomData.baseBet)) {
+      throw new Error("单注倍数必须是1、2或5");
     }
 
-    if (roomData.betAmount < 50) {
-      throw new Error("单注金额不能少于50");
+    // 验证房间局数
+    if (![10, 20, 50].includes(roomData.totalRounds)) {
+      throw new Error("房间局数必须是10、20或50");
     }
 
-    if (
-      roomData.totalRounds < GAME_CONFIG.MIN_ROOM_ROUNDS ||
-      roomData.totalRounds > GAME_CONFIG.MAX_ROOM_ROUNDS
-    ) {
-      throw new Error(
-        `房间局数必须在${GAME_CONFIG.MIN_ROOM_ROUNDS}-${GAME_CONFIG.MAX_ROOM_ROUNDS}之间`
-      );
-    }
+    // 处理密码
+    const password =
+      roomData.password && roomData.password.trim() !== ""
+        ? roomData.password.trim()
+        : null;
+    const hasPassword = password !== null;
 
     // 创建房间
     const room = new Room({
-      ...roomData,
+      roomId: uuidv4().substring(0, 8),
       creator: creatorId,
+      baseBet: roomData.baseBet,
+      totalRounds: roomData.totalRounds,
+      password: password,
+      hasPassword: hasPassword,
+      currentRound: 0,
+      status: ROOM_STATUS.WAITING,
     });
 
     // 创建者自动加入房间
-    room.addPlayer(creator, roomData.defaultRoomGold);
+    room.addPlayer(creator);
 
     await room.save();
 
@@ -72,12 +78,11 @@ class RoomService {
     // 只返回房间基本信息，不暴露其他玩家详细信息
     return {
       roomId: room.roomId,
-      name: room.name,
       creator: room.creator,
-      defaultRoomGold: room.defaultRoomGold,
-      betAmount: room.betAmount,
+      baseBet: room.baseBet,
       totalRounds: room.totalRounds,
       currentRound: room.currentRound,
+      hasPassword: room.hasPassword,
       playersCount: room.players.length,
       status: room.status,
       createdAt: room.createdAt,
@@ -90,33 +95,38 @@ class RoomService {
    * @param {string} userId 用户ID
    * @returns {Object} 房间信息
    */
-  async joinRoom(roomId, userId) {
-    // 验证用户
+  async joinRoom(roomId, userId, password = null) {
     const user = await User.findById(userId);
     if (!user) {
       throw new Error("用户不存在");
     }
 
-    // 查找房间
     const room = await Room.findOne({ roomId });
     if (!room) {
       throw new Error("房间不存在");
     }
 
-    // 检查房间状态
-    if (room.status !== ROOM_STATUS.WAITING) {
+    const isExistingPlayer = room.players.some((p) => {
+      const playerId = p.userId._id
+        ? p.userId._id.toString()
+        : p.userId.toString();
+      return playerId === userId.toString();
+    });
+
+    if (!isExistingPlayer && room.status !== ROOM_STATUS.WAITING) {
       throw new Error("房间不在等待状态，无法加入");
     }
 
-    // 使用房间默认金币
-    const roomGold = room.defaultRoomGold;
+    if (!room.verifyPassword(password)) {
+      throw new Error("房间密码错误");
+    }
 
-    // 添加玩家到房间
-    room.addPlayer(user, roomGold);
+    if (!isExistingPlayer) {
+      room.addPlayer(user);
+    }
 
     await room.save();
 
-    // 重新查询并填充用户信息
     const populatedRoom = await Room.findById(room._id)
       .populate("creator", "nickname avatar")
       .populate("players.userId", "nickname avatar");
@@ -198,8 +208,12 @@ class RoomService {
         userId: player.userId._id || player.userId,
         nickname: player.userId.nickname || player.nickname,
         avatar: player.userId.avatar || player.avatar,
+        seatNumber: player.seatNumber,
         roomGold: player.roomGold,
+        isCreator: player.isCreator,
         isReady: player.isReady,
+        isFolded: player.isFolded,
+        hasSeenCards: player.hasSeenCards,
         status: player.status,
         isSelf: (() => {
           // Handle both cases: populated user object and ObjectId
@@ -222,12 +236,11 @@ class RoomService {
   formatRoom(room) {
     return {
       roomId: room.roomId,
-      name: room.name,
       creator: room.creator,
-      defaultRoomGold: room.defaultRoomGold,
-      betAmount: room.betAmount,
+      baseBet: room.baseBet,
       totalRounds: room.totalRounds,
       currentRound: room.currentRound,
+      hasPassword: room.hasPassword,
       players: room.players.map((player) => ({
         userId: player.userId._id || player.userId,
         nickname:
@@ -235,8 +248,12 @@ class RoomService {
             ? player.userId.nickname
             : player.nickname || `玩家${room.players.indexOf(player) + 1}`,
         avatar: player.userId.avatar || player.avatar || "",
+        seatNumber: player.seatNumber,
         roomGold: player.roomGold,
+        isCreator: player.isCreator,
         isReady: player.isReady,
+        isFolded: player.isFolded,
+        hasSeenCards: player.hasSeenCards,
         status: player.status,
       })),
       observers: room.observers.map((observer) => ({
@@ -269,6 +286,44 @@ class RoomService {
       .limit(20);
 
     return rooms.map((room) => this.formatRoom(room));
+  }
+
+  /**
+   * 切换玩家准备状态
+   * @param {string} roomId 房间ID
+   * @param {string} userId 用户ID
+   * @returns {Object} 更新后的房间信息
+   */
+  async togglePlayerReadyStatus(roomId, userId) {
+    // 查找房间并填充用户信息
+    const room = await Room.findOne({ roomId })
+      .populate("creator", "nickname avatar")
+      .populate("players.userId", "nickname avatar");
+    if (!room) {
+      throw new Error("房间不存在");
+    }
+
+    // 查找并更新玩家准备状态
+    const playerIndex = room.players.findIndex((p) => {
+      // Handle both cases: populated user object and ObjectId
+      const playerId = p.userId._id
+        ? p.userId._id.toString()
+        : p.userId.toString();
+      return playerId === userId;
+    });
+
+    if (playerIndex === -1) {
+      throw new Error("玩家不在房间内");
+    }
+
+    // 切换玩家准备状态
+    const newReadyStatus = !room.players[playerIndex].isReady;
+    room.players[playerIndex].isReady = newReadyStatus;
+    room.players[playerIndex].status = newReadyStatus ? "ready" : "waiting";
+
+    await room.save();
+
+    return this.formatRoom(room);
   }
 
   /**

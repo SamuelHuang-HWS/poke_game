@@ -175,6 +175,79 @@ async function getGameDetail(req, res) {
   }
 }
 
+/**
+ * 开始下一局
+ * @param {Object} req 请求对象
+ * @param {Object} res 响应对象
+ */
+async function startNextRound(req, res) {
+  try {
+    const { roomId } = req.body;
+
+    const game = await gameService.startNextRound(roomId);
+
+    res.status(201).json({
+      success: true,
+      message: '下一局开始成功',
+      data: game
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+}
+
+/**
+ * 处理玩家超时
+ * @param {Object} req 请求对象
+ * @param {Object} res 响应对象
+ */
+async function handlePlayerTimeout(req, res) {
+  try {
+    const { gameId } = req.body;
+    const userId = req.user.userId;
+
+    const game = await gameService.handlePlayerTimeout(gameId, userId);
+
+    res.status(200).json({
+      success: true,
+      message: '超时处理成功',
+      data: game
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+}
+
+/**
+ * 强制比牌
+ * @param {Object} req 请求对象
+ * @param {Object} res 响应对象
+ */
+async function forceCompare(req, res) {
+  try {
+    const { gameId } = req.body;
+
+    const game = await gameService.forceCompare(gameId);
+
+    res.status(200).json({
+      success: true,
+      message: '强制比牌成功',
+      data: game
+    });
+  } catch (error) {
+    res.status(400).json({
+      success: false,
+      message: error.message
+    });
+  }
+}
+
 module.exports = {
   startGame,
   seeCards,
@@ -182,5 +255,8 @@ module.exports = {
   raise,
   fold,
   compare,
-  getGameDetail
+  getGameDetail,
+  startNextRound,
+  handlePlayerTimeout,
+  forceCompare
 };

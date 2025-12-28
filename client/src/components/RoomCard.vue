@@ -2,7 +2,12 @@
 <template>
   <div class="room-card glass-effect" @click="$emit('select', room)">
     <div class="room-header">
-      <h3 class="room-name">{{ room.name }}</h3>
+      <div class="room-title">
+        <h3 class="room-name">房间 {{ room.roomId }}</h3>
+        <span v-if="room.hasPassword" class="password-badge" title="需要密码">
+          🔒
+        </span>
+      </div>
       <span class="room-status" :class="room.status">
         {{ getStatusText(room.status) }}
       </span>
@@ -14,12 +19,8 @@
         <span class="value">{{ room.roomId }}</span>
       </div>
       <div class="detail-item">
-        <span class="label">初始金币:</span>
-        <span class="value gold">{{ room.defaultRoomGold }}</span>
-      </div>
-      <div class="detail-item">
-        <span class="label">单注金额:</span>
-        <span class="value">{{ room.betAmount }}</span>
+        <span class="label">单注倍数:</span>
+        <span class="value">{{ room.baseBet }}倍</span>
       </div>
       <div class="detail-item">
         <span class="label">局数:</span>
@@ -33,26 +34,94 @@
     
     <div class="room-footer">
       <button
-        @click.stop="$emit('join', room.roomId)"
+        @click.stop="handleJoin"
         class="join-button"
-        :disabled="room.isFull || room.status !== 'waiting'"
+        :disabled="!canJoinRoom()"
       >
-        {{ room.isFull ? '房间已满' : '加入房间' }}
+        {{ getButtonText() }}
       </button>
     </div>
+    
+    <PasswordModal
+      :visible="showPasswordModal"
+      @confirm="handlePasswordConfirm"
+      @cancel="showPasswordModal = false"
+    />
   </div>
 </template>
 
 <script>
+import { ref } from 'vue';
+import PasswordModal from './PasswordModal.vue';
+
 export default {
   name: 'RoomCard',
+  components: {
+    PasswordModal
+  },
   props: {
     room: {
       type: Object,
       required: true
+    },
+    currentUserId: {
+      type: String,
+      default: null
     }
   },
   emits: ['select', 'join'],
+  setup(props, { emit }) {
+    const showPasswordModal = ref(false);
+    
+    const isPlayerInRoom = () => {
+      if (!props.currentUserId || !props.room.players) return false;
+      return props.room.players.some(player => 
+        player.userId?.toString() === props.currentUserId?.toString()
+      );
+    };
+    
+    const canJoinRoom = () => {
+      if (props.room.isFull) return false;
+      if (isPlayerInRoom()) return true;
+      return props.room.status === 'waiting';
+    };
+    
+    const getButtonText = () => {
+      if (props.room.isFull) return '房间已满';
+      if (isPlayerInRoom()) return '进入房间';
+      return '加入房间';
+    };
+    
+    const handleJoin = () => {
+      if (!canJoinRoom()) {
+        return;
+      }
+      
+      if (isPlayerInRoom()) {
+        emit('join', props.room.roomId);
+        return;
+      }
+      
+      if (props.room.hasPassword) {
+        showPasswordModal.value = true;
+      } else {
+        emit('join', props.room.roomId);
+      }
+    };
+    
+    const handlePasswordConfirm = (password) => {
+      showPasswordModal.value = false;
+      emit('join', props.room.roomId, password);
+    };
+    
+    return {
+      showPasswordModal,
+      handleJoin,
+      handlePasswordConfirm,
+      canJoinRoom,
+      getButtonText
+    };
+  },
   methods: {
     getStatusText(status) {
       const statusMap = {
@@ -63,7 +132,7 @@ export default {
       return statusMap[status] || status;
     },
     getMaxPlayers() {
-      return 5; // 根据配置文件中的MAX_ROOM_PLAYERS
+      return 5;
     }
   }
 };
@@ -92,11 +161,31 @@ export default {
   margin-bottom: 15px;
 }
 
+.room-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .room-name {
   font-size: 18px;
   font-weight: 600;
   color: #f0f0f0;
   margin: 0;
+}
+
+.password-badge {
+  font-size: 16px;
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
 }
 
 .room-status {

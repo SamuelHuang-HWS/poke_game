@@ -70,23 +70,35 @@ class GameService {
       room.players[dealerIndex].nickname
     );
 
+    console.log("=== 开始创建游戏对象 ===");
+    console.log("房间玩家数据:", JSON.stringify(room.players, null, 2));
+
     const game = new Game({
       roomId: room.roomId,
       round: room.currentRound + 1,
       dealerIndex: dealerIndex,
       currentPlayerIndex: dealerIndex,
-      minBet: room.betAmount,
-      players: room.players.map((player) => ({
-        userId: player.userId,
-        nickname: player.nickname,
-        avatar: player.avatar,
-        roomGold: player.roomGold,
-        cards: [],
-        hasSeenCards: false,
-        currentBet: 0,
-        totalBet: 0,
-        status: PLAYER_STATUS.PLAYING,
-      })),
+      minBet: room.baseBet,
+      players: room.players.map((player) => {
+        console.log(
+          `映射玩家 ${
+            player.nickname
+          }, roomGold类型: ${typeof player.roomGold}, roomGold值: ${
+            player.roomGold
+          }`
+        );
+        return {
+          userId: player.userId,
+          nickname: player.nickname,
+          avatar: player.avatar,
+          roomGold: player.roomGold,
+          cards: [],
+          hasSeenCards: false,
+          totalBet: 0,
+          currentRoundBet: 0,
+          status: PLAYER_STATUS.PLAYING,
+        };
+      }),
     });
     console.log("游戏对象创建完成");
 
@@ -100,24 +112,26 @@ class GameService {
     }
 
     game.pot = 0;
+    const anteAmount = room.baseBet;
+    console.log("=== 开始扣除底分 ===");
+    console.log(`底分金额: ${anteAmount}, 类型: ${typeof anteAmount}`);
 
-    const anteAmount = room.betAmount;
     for (let i = 0; i < game.players.length; i++) {
       const player = game.players[i];
-      if (player.roomGold < anteAmount) {
-        player.roomGold = 0;
-        player.currentBet = player.roomGold;
-        player.totalBet = player.roomGold;
-        game.updatePot(player.roomGold);
-      } else {
-        player.roomGold -= anteAmount;
-        player.currentBet = anteAmount;
-        player.totalBet = anteAmount;
-        game.updatePot(anteAmount);
-      }
+      console.log(
+        `处理玩家 ${player.nickname}, 扣除前roomGold: ${
+          player.roomGold
+        }, 类型: ${typeof player.roomGold}`
+      );
+      // 允许负数积分，不进行金币验证
+      player.roomGold -= anteAmount;
+      player.totalBet = anteAmount;
+      player.currentRoundBet = anteAmount;
+      game.updatePot(anteAmount);
       console.log(
         `玩家 ${player.nickname} 扣除底分 ${anteAmount}, 剩余金币: ${player.roomGold}`
       );
+      console.log(`当前底池pot: ${game.pot}, 类型: ${typeof game.pot}`);
     }
 
     game.startGame();
@@ -146,18 +160,26 @@ class GameService {
    */
   isBettingRoundComplete(game) {
     const activePlayers = game.players.filter(
-      (p) => p.status === PLAYER_STATUS.PLAYING && p.roomGold > 0
+      (p) => p.status === PLAYER_STATUS.PLAYING
     );
 
     if (activePlayers.length <= 1) {
-      return true; // 只剩一个或没有活跃玩家，轮次完成
+      return true;
     }
 
-    // 检查所有活跃玩家的当前下注是否相等
-    const activeBets = activePlayers.map((p) => p.currentBet);
-    const allEqual = activeBets.every((bet) => bet === activeBets[0]);
+    return activePlayers.every((player) => player.hasActedThisRound);
+  }
 
-    return allEqual;
+  /**
+   * 重置当前轮次下注
+   * @param {Object} game 游戏对象
+   */
+  resetRoundBets(game) {
+    game.players.forEach((player) => {
+      player.currentRoundBet = 0;
+      player.hasActedThisRound = false;
+    });
+    console.log("已重置所有玩家的轮次下注");
   }
 
   /**
@@ -178,10 +200,7 @@ class GameService {
         console.log("所有玩家都已操作，需要检查是否完成一轮");
         break;
       }
-    } while (
-      game.players[nextIndex].status !== PLAYER_STATUS.PLAYING ||
-      game.players[nextIndex].roomGold <= 0
-    );
+    } while (game.players[nextIndex].status !== PLAYER_STATUS.PLAYING);
 
     game.currentPlayerIndex = nextIndex;
     console.log(
@@ -191,11 +210,6 @@ class GameService {
     // 检查当前下注轮次是否完成
     if (this.isBettingRoundComplete(game)) {
       console.log("下注轮次已完成，需要结束当前轮次");
-
-      // 重置当前轮次下注，为下一轮做准备
-      game.players.forEach((player) => {
-        player.currentBet = 0; // 重置当前轮次下注
-      });
 
       // 检查是否还有多于1个活跃玩家，决定是否继续游戏
       const activePlayers = game.players.filter(
@@ -208,6 +222,13 @@ class GameService {
         game.status = GAME_STATUS.SETTLED;
       } else {
         console.log("下注轮次完成，但游戏继续");
+        // 将所有玩家的 hasActedThisRound 设为 false
+        game.players.forEach((player) => {
+          player.hasActedThisRound = false;
+        });
+        // bettingRound + 1
+        game.bettingRound += 1;
+        console.log(`当前下注轮次: ${game.bettingRound}`);
       }
     }
 
@@ -239,14 +260,7 @@ class GameService {
 
     player.hasSeenCards = true;
 
-    this.moveToNextPlayer(game);
-
     await game.save();
-
-    // 如果游戏状态变为结算状态，结束游戏
-    if (game.status === GAME_STATUS.SETTLED) {
-      return await this.endGame(gameId);
-    }
 
     return this.formatGame(game, userId);
   }
@@ -274,31 +288,27 @@ class GameService {
       throw new Error("玩家状态不允许跟注");
     }
 
-    // 如果玩家已经看牌，则跟注金额需要翻倍
-    let callAmount = game.minBet - player.currentBet;
-    if (player.hasSeenCards) {
-      callAmount = game.minBet * 2 - player.currentBet;
-    }
+    const minBet = game.minBet;
+    const callAmount = player.hasSeenCards ? minBet * 2 : minBet;
 
-    if (player.roomGold < callAmount) {
-      throw new Error("房间金币不足");
-    }
+    console.log(
+      `玩家 ${
+        player.nickname
+      } 跟注金额: ${callAmount}, 类型: ${typeof callAmount}, 看牌状态: ${
+        player.hasSeenCards
+      }, 最小下注额: ${minBet}, 当前轮次下注: ${player.currentRoundBet}`
+    );
 
     player.roomGold -= callAmount;
-    player.currentBet += callAmount;
     player.totalBet += callAmount;
+    player.currentRoundBet += callAmount;
+    player.hasActedThisRound = true;
     game.updatePot(callAmount);
-
-    // 如果玩家看牌后跟注，更新最小下注额为当前轮次的最低下注额的双倍
-    if (player.hasSeenCards) {
-      game.minBet = Math.max(game.minBet, game.minBet * 2);
-    }
 
     this.moveToNextPlayer(game);
 
     await game.save();
 
-    // 如果游戏状态变为结算状态，结束游戏
     if (game.status === GAME_STATUS.SETTLED) {
       return await this.endGame(gameId);
     }
@@ -330,31 +340,21 @@ class GameService {
       throw new Error("玩家状态不允许加注");
     }
 
-    // 如果玩家已经看牌，则加注金额需要翻倍
-    let raiseAmount = amount;
+    player.roomGold -= amount;
+    player.totalBet += amount;
+    player.currentRoundBet = player.currentRoundBet + amount;
+    player.hasActedThisRound = true;
+    game.updatePot(amount);
     if (player.hasSeenCards) {
-      raiseAmount = amount * 2;
+      game.minBet = amount / 2;
+    } else {
+      game.minBet = amount;
     }
-
-    if (raiseAmount <= game.minBet) {
-      throw new Error("加注金额必须大于当前最小下注额");
-    }
-
-    if (player.roomGold < raiseAmount) {
-      throw new Error("房间金币不足");
-    }
-
-    player.roomGold -= raiseAmount;
-    player.currentBet += raiseAmount;
-    player.totalBet += raiseAmount;
-    game.updatePot(raiseAmount);
-    game.minBet = raiseAmount;
 
     this.moveToNextPlayer(game);
 
     await game.save();
 
-    // 如果游戏状态变为结算状态，结束游戏
     if (game.status === GAME_STATUS.SETTLED) {
       return await this.endGame(gameId);
     }
@@ -386,6 +386,7 @@ class GameService {
     }
 
     player.status = PLAYER_STATUS.FOLDED;
+    player.hasActedThisRound = true;
 
     const activePlayers = game.players.filter(
       (p) => p.status === PLAYER_STATUS.PLAYING
@@ -588,6 +589,7 @@ class GameService {
       status: game.status,
       pot: game.pot,
       minBet: game.minBet,
+      bettingRound: game.bettingRound,
       dealerIndex: game.dealerIndex,
       currentPlayerIndex: game.currentPlayerIndex,
       currentPlayerId: game.players[game.currentPlayerIndex]?.userId,
@@ -610,8 +612,8 @@ class GameService {
           roomGold: player.roomGold,
           cards: player.cards || [],
           hasSeenCards: player.hasSeenCards,
-          currentBet: player.currentBet,
           totalBet: player.totalBet,
+          currentRoundBet: player.currentRoundBet,
           status: player.status,
           cardType: player.cards ? getCardType(player.cards).typeName : null,
           isSelf: isPlayerSelf,

@@ -83,7 +83,7 @@
         :class="{ 'ready': isReady }"
         :disabled="!room"
       >
-        {{ isReady ? '取消准备' : '准备开始' }}
+        {{ isReady ? '取消准备' : '准备' }}
       </button>
       
       <button 
@@ -104,7 +104,6 @@
       />
       <BetControls
         v-if="isCurrentPlayer && currentGame && authStore?.user?.id"
-        :current-bet="currentPlayerBet"
         :min-bet="minBet"
         :player-gold="currentPlayerGold"
         :active-players="activePlayers"
@@ -117,6 +116,8 @@
         :is-player-turn="isPlayerTurn"
         :game-id="currentGame._id || currentGame.id"
         :user-id="authStore?.user?.id"
+        :has-seen-cards="currentPlayer?.hasSeenCards"
+        :betting-round="currentGame?.bettingRound || 1"
         class="bet-controls-section"
       />
     </div>
@@ -186,7 +187,7 @@ export default {
     
     const currentPlayerBet = computed(() => {
       try {
-        const bet = currentPlayer.value ? currentPlayer.value.currentBet : 0;
+        const bet = currentPlayer.value ? currentPlayer.value.totalBet : 0;
         return bet;
       } catch (error) {
         console.error('currentPlayerBet计算属性出错:', error);
@@ -307,7 +308,8 @@ export default {
                    currentPlayer.value.status === 'playing' && 
                    activePlayers.value.length > 1 &&
                    currentGame.value?.status === 'betting' &&
-                   isCurrentPlayer.value; // 确保只有当前玩家可以操作
+                   currentGame.value?.bettingRound > 3 &&
+                   isCurrentPlayer.value;
         return can;
       } catch (error) {
         console.error('canCompare计算属性出错:', error);
@@ -393,11 +395,16 @@ export default {
       leavingRoom.value = true;
       
       try {
-        // 发送离开房间请求并等待响应
-        await socketRequest('leave_room', {
+        const data = {
           roomId: room.value.roomId,
           userId: authStore?.user?.id
-        });
+        };
+        console.log('GameRoom: Emit leave_room', data);
+        // 发送离开房间请求并等待响应
+        await socketRequest('leave_room', data);
+        
+        // 清除Socket中的房间信息
+        socket.clearCurrentRoom();
         
         // 只有在服务器确认后才跳转
         router.push('/');
@@ -431,8 +438,10 @@ export default {
       
       socket.on('test_event', (data) => {
         console.log('GameRoom: Received test_event', data);
+        const responseData = { response: '测试响应', originalData: data };
+        console.log('GameRoom: Emit test_response', responseData);
         // 发送响应
-        socket.emit('test_response', { response: '测试响应', originalData: data });
+        socket.emit('test_response', responseData);
       });
       
       socket.on('room_updated', (updatedRoom) => {
@@ -445,14 +454,16 @@ export default {
           gameStarted.value = true;
           
           // 房间开始游戏后，主动获取游戏数据
-          socket.emit('get_game_data', {
+          const data = {
             roomId: route.params.roomId,
             userId: authStore?.user?.id
-          });
+          };
+          console.log('GameRoom: Emit get_game_data', data);
+          socket.emit('get_game_data', data);
         }
         
         // 更新准备状态
-        const selfPlayer = updatedRoom.players?.find(p => p.isSelf);
+        const selfPlayer = updatedRoom.players?.find(p => p.userId === authStore?.user?.id);
         isReady.value = selfPlayer ? selfPlayer.isReady : false;
       });
       
@@ -462,6 +473,22 @@ export default {
         // 或者可以显示一个提示消息
         if (data.nickname) {
           // 显示玩家离开提示
+        }
+      });
+      
+      socket.on('player_folded', (data) => {
+        console.log('GameRoom: Received player_folded', data);
+        // 玩家弃牌通知
+        if (data.message) {
+          // 可以在这里显示弃牌提示
+        }
+      });
+      
+      socket.on('player_offline_folded', (data) => {
+        console.log('GameRoom: Received player_offline_folded', data);
+        // 玩家断线超时自动弃牌通知
+        if (data.message) {
+          // 可以在这里显示断线弃牌提示
         }
       });
       
@@ -612,24 +639,26 @@ export default {
 
     // 等待Socket连接建立
     const waitForSocketConnection = () => {
-      return new Promise((resolve) => {
+      return new Promise((resolve, reject) => {
         if (socket.getStatus().connected) {
           resolve();
           return;
         }
         
+        let checkCount = 0;
+        const maxChecks = 100; // 最多检查 100 次，每次 100ms，总共 10 秒
+        
         const checkConnection = setInterval(() => {
+          checkCount++;
+          
           if (socket.getStatus().connected) {
             clearInterval(checkConnection);
             resolve();
+          } else if (checkCount >= maxChecks) {
+            clearInterval(checkConnection);
+            reject(new Error('Socket连接超时'));
           }
         }, 100);
-        
-        // 设置超时时间
-        setTimeout(() => {
-          clearInterval(checkConnection);
-          resolve(); // 即使未连接也继续，避免无限等待
-        }, 5000);
       });
     };
     
@@ -666,7 +695,7 @@ export default {
         }
         
         // 初始化Socket连接
-        const socketUrl = import.meta.env.VITE_SOCKET_URL || "http://localhost:3001";
+        const socketUrl = import.meta.env.VITE_SOCKET_URL || "http://localhost:3000";
         socket.connect(socketUrl);
         
         // 设置Socket监听器
@@ -675,14 +704,25 @@ export default {
         // 等待Socket连接建立
         await waitForSocketConnection();
         
-        // 设置Socket连接
+        // 设置当前房间信息，用于重连时自动重新加入
+        socket.setCurrentRoom(roomId, authStore?.user?.id);
+        
+        // 加入房间
         socket.emit('user_join', {
           userId: authStore?.user?.id,
           roomId: roomId
         });
       } catch (error) {
         console.error('加入房间失败:', error);
-        alert(error.message || '加入房间失败');
+        
+        let errorMessage = '加入房间失败';
+        if (error.message && error.message.includes('Socket连接超时')) {
+          errorMessage = 'Socket连接超时，请检查网络连接或刷新页面重试';
+        } else if (error.message) {
+          errorMessage = error.message;
+        }
+        
+        alert(errorMessage);
         router.push('/');
       }
     });
@@ -698,6 +738,9 @@ export default {
           userId: authStore?.user?.id
         });
       }
+      
+      // 清除Socket中的房间信息
+      socket.clearCurrentRoom();
       
       // 断开Socket连接
       socket.disconnect();

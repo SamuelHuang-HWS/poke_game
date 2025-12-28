@@ -36,19 +36,16 @@
              >
                <div class="chip">
                  <!-- <span class="chip-icon">🪙</span> -->
-                 <span class="chip-amount">{{ player.currentBet }}</span>
+                 <span class="chip-amount">{{ player.totalBet }}</span>
                </div>
                <!-- <div class="player-name">{{ player.nickname?.substring(0, 4) || '玩家' }}</div> -->
              </div>
            </div>
          </div>
 
-        <!-- 获胜者信息 -->
+        <!-- 获胜者信息 - 不显示牌 -->
         <div v-if="game?.winner" class="winner-info">
           <div class="winner-text">🏆 {{ game.winner.nickname }} 获胜!</div>
-          <div class="winner-cards">
-            {{ formatCards(game.winner.cards) }} ({{ getCardTypeText(game.winner.cardType) }})
-          </div>
           <div class="winnings">获得: 💰 {{ game.winner.winnings }}</div>
         </div>
       </div>
@@ -144,7 +141,7 @@ export default {
     bettingPlayers() {
       // 获取有下注的玩家
       if (!this.validDisplayPlayers) return [];
-      return this.validDisplayPlayers.filter(player => player.currentBet > 0);
+      return this.validDisplayPlayers.filter(player => player.totalBet > 0);
     },
     
     validDisplayPlayers() {
@@ -180,15 +177,12 @@ export default {
     shouldShowCards(player) {
       if (!this.game) return false;
       
+      // 只显示自己的牌
       if (player.isSelf) {
         return true;
       }
       
-      // 只在游戏结算状态时显示其他玩家的牌
-      if (this.game.status === 'settled') {
-        return true;
-      }
-      
+      // 不显示其他玩家的牌，即使在结算状态
       return false;
     }
   }

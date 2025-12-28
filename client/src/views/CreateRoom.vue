@@ -19,41 +19,17 @@
       <div class="form-container glass-effect">
         <form @submit.prevent="handleCreateRoom" class="room-form">
           <div class="form-group">
-            <label class="form-label">房间名称</label>
-            <input
-              v-model="formData.name"
-              type="text"
-              placeholder="请输入房间名称"
-              class="form-input"
+            <label class="form-label">单注倍数</label>
+            <select
+              v-model.number="formData.baseBet"
+              class="form-select"
               required
-              maxlength="20"
-            />
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">房间初始金币</label>
-            <input
-              v-model.number="formData.defaultRoomGold"
-              type="number"
-              placeholder="请输入房间初始金币"
-              class="form-input"
-              required
-              min="1000"
-            />
-            <div class="form-hint">所有玩家进入房间时的初始金币数量，最少1000金币</div>
-          </div>
-
-          <div class="form-group">
-            <label class="form-label">单注金额</label>
-            <input
-              v-model.number="formData.betAmount"
-              type="number"
-              placeholder="请输入单注金额"
-              class="form-input"
-              required
-              min="50"
-            />
-            <div class="form-hint">最少50金币</div>
+            >
+              <option value="1">1倍（100金币）</option>
+              <option value="2">2倍（200金币）</option>
+              <option value="5">5倍（500金币）</option>
+            </select>
+            <div class="form-hint">每注的基础金额</div>
           </div>
 
           <div class="form-group">
@@ -63,12 +39,9 @@
               class="form-select"
               required
             >
-              <option value="5">5局</option>
               <option value="10">10局</option>
-              <option value="15">15局</option>
               <option value="20">20局</option>
-              <option value="25">25局</option>
-              <option value="30">30局</option>
+              <option value="50">50局</option>
             </select>
           </div>
 
@@ -76,11 +49,12 @@
             <label class="form-label">房间密码（可选）</label>
             <input
               v-model="formData.password"
-              type="text"
-              placeholder="请输入房间密码（可留空）"
+              type="password"
               class="form-input"
+              placeholder="留空则为公开房间"
               maxlength="20"
             />
+            <div class="form-hint">设置密码后，只有知道密码的玩家才能加入</div>
           </div>
 
           <button
@@ -108,9 +82,7 @@ export default {
     const roomStore = useRoomStore();
     
     const formData = ref({
-      name: '',
-      defaultRoomGold: 10000,
-      betAmount: 50,
+      baseBet: 1,
       totalRounds: 10,
       password: ''
     });

@@ -2,7 +2,7 @@
  * @Author: Wensong Huang wensong.huang@eeoa.com
  * @Date: 2025-12-19 18:24:48
  * @LastEditors: Wensong Huang wensong.huang@eeoa.com
- * @LastEditTime: 2025-12-19 18:24:50
+ * @LastEditTime: 2025-12-26 13:13:27
  * @FilePath: /poke_game/server/config/constants.js
  * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
  */
@@ -23,6 +23,8 @@ module.exports = {
     DEFAULT_ROOM_ROUNDS: 10,
     MIN_ROOM_ROUNDS: 5,
     MAX_ROOM_ROUNDS: 30,
+    MAX_BETTING_ROUNDS: 15,
+    PLAYER_ACTION_TIMEOUT: 30,
   },
 
   // 房间状态

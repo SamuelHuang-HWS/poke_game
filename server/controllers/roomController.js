@@ -57,10 +57,10 @@ async function searchRoom(req, res) {
  */
 async function joinRoom(req, res) {
   try {
-    const { roomId } = req.body;
+    const { roomId, password } = req.body;
     const userId = req.user.userId;
 
-    const room = await roomService.joinRoom(roomId, userId);
+    const room = await roomService.joinRoom(roomId, userId, password);
 
     res.status(200).json({
       success: true,

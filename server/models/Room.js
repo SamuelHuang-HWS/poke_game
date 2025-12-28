@@ -8,48 +8,47 @@ const roomSchema = new mongoose.Schema(
     roomId: {
       type: String,
       unique: true,
-      default: () => `ROOM_${uuidv4().substring(0, 8).toUpperCase()}`,
+      required: true,
     },
     creator: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
-    name: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-    // 单注金额
-    betAmount: {
+    // 单注倍数（1倍/2倍/5倍）
+    baseBet: {
       type: Number,
       required: true,
-      min: 50,
+      enum: [1, 2, 5],
+      default: 1,
     },
-    // 房间默认金币（所有玩家初始金币）
-    defaultRoomGold: {
-      type: Number,
-      required: true,
-      min: 1000,
-      default: 10000,
-    },
-    // 房间局数
+    // 房间局数（10局/20局/50局）
     totalRounds: {
       type: Number,
       required: true,
-      min: GAME_CONFIG.MIN_ROOM_ROUNDS,
-      max: GAME_CONFIG.MAX_ROOM_ROUNDS,
-      default: GAME_CONFIG.DEFAULT_ROOM_ROUNDS,
+      enum: [10, 20, 50],
+      default: 10,
+    },
+    // 房间密码（可选）
+    password: {
+      type: String,
+      default: null,
+    },
+    // 是否有密码
+    hasPassword: {
+      type: Boolean,
+      default: false,
     },
     // 当前局数
     currentRound: {
       type: Number,
       default: 0,
     },
-    // 房间密码（可选）
-    password: {
-      type: String,
-      trim: true,
+    // 当前游戏ID
+    gameId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Game",
+      default: null,
     },
     // 玩家列表
     players: [
@@ -60,13 +59,33 @@ const roomSchema = new mongoose.Schema(
         },
         nickname: String,
         avatar: String,
+        // 座位号
+        seatNumber: {
+          type: Number,
+          required: true,
+        },
         // 房间内游戏币
         roomGold: {
           type: Number,
           default: 0,
         },
-        // 是否准备
+        // 是否是房主
+        isCreator: {
+          type: Boolean,
+          default: false,
+        },
+        // 是否已准备
         isReady: {
+          type: Boolean,
+          default: false,
+        },
+        // 是否已弃牌
+        isFolded: {
+          type: Boolean,
+          default: false,
+        },
+        // 是否看牌
+        hasSeenCards: {
           type: Boolean,
           default: false,
         },
@@ -83,11 +102,6 @@ const roomSchema = new mongoose.Schema(
             rank: Number, // 点数
           },
         ],
-        // 是否看牌
-        hasSeenCards: {
-          type: Boolean,
-          default: false,
-        },
         // 最后操作时间
         lastActionAt: Date,
       },
@@ -181,7 +195,7 @@ roomSchema.virtual("canStartGame").get(function () {
 });
 
 // 添加玩家
-roomSchema.methods.addPlayer = function (user, roomGold) {
+roomSchema.methods.addPlayer = function (user) {
   // 检查是否已在房间内
   const existingPlayer = this.players.find(
     (p) => p.userId.toString() === user._id.toString()
@@ -195,6 +209,9 @@ roomSchema.methods.addPlayer = function (user, roomGold) {
     throw new Error("房间已满");
   }
 
+  // 分配座位号（按加入顺序）
+  const seatNumber = this.players.length + 1;
+
   this.players.push({
     userId: user._id,
     nickname:
@@ -202,12 +219,24 @@ roomSchema.methods.addPlayer = function (user, roomGold) {
         ? user.nickname
         : `玩家${this.players.length + 1}`,
     avatar: user.avatar || "",
-    roomGold: roomGold,
+    seatNumber: seatNumber,
+    roomGold: 0,
+    isCreator: seatNumber === 1,
+    isFolded: false,
+    hasSeenCards: false,
     status: "waiting",
   });
 
   this.updatedAt = new Date();
   return this;
+};
+
+// 验证房间密码
+roomSchema.methods.verifyPassword = function (password) {
+  if (!this.hasPassword) {
+    return true;
+  }
+  return this.password === password;
 };
 
 // 移除玩家

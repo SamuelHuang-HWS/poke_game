@@ -95,25 +95,17 @@ function validateLogin(req, res, next) {
  */
 function validateCreateRoom(req, res, next) {
   const schema = Joi.object({
-    name: Joi.string().min(1).max(20).required().messages({
-      "string.min": "房间名称不能为空",
-      "string.max": "房间名称不能超过20个字符",
-      "any.required": "房间名称不能为空",
+    baseBet: Joi.number().valid(1, 2, 5).required().messages({
+      "any.only": "单注倍数必须是1、2或5",
+      "any.required": "单注倍数不能为空",
     }),
-    defaultRoomGold: Joi.number().min(1000).required().messages({
-      "number.min": "房间初始金币不能少于1000",
-      "any.required": "房间初始金币不能为空",
-    }),
-    betAmount: Joi.number().min(50).required().messages({
-      "number.min": "单注金额不能少于50",
-      "any.required": "单注金额不能为空",
-    }),
-    totalRounds: Joi.number().min(5).max(30).required().messages({
-      "number.min": "房间局数不能少于5局",
-      "number.max": "房间局数不能超过30局",
+    totalRounds: Joi.number().valid(10, 20, 50).required().messages({
+      "any.only": "房间局数必须是10、20或50",
       "any.required": "房间局数不能为空",
     }),
-    password: Joi.string().optional().allow(""),
+    password: Joi.string().allow("").max(20).optional().messages({
+      "string.max": "密码长度不能超过20位",
+    }),
   });
 
   const { error } = schema.validate(req.body);
@@ -155,6 +147,9 @@ function validateJoinRoom(req, res, next) {
   const schema = Joi.object({
     roomId: Joi.string().required().messages({
       "any.required": "房间号不能为空",
+    }),
+    password: Joi.string().allow("").max(20).optional().messages({
+      "string.max": "密码长度不能超过20位",
     }),
   });
 

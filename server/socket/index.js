@@ -11,52 +11,63 @@ const roomService = require("../services/roomService");
 function initializeSocket(server) {
   const io = socketIO(server, {
     cors: {
-      origin: "*", // 生产环境中应该设置具体的域名
+      origin: "*",
       methods: ["GET", "POST"],
     },
   });
 
-  // 存储用户连接信息
   const userSockets = new Map();
+  const playerOfflineTimers = new Map();
 
   io.on("connection", (socket) => {
     console.log("用户连接:", socket.id);
 
-    // 添加一个简单的测试事件
-    socket.on("test_event", (data) => {
-      console.log("收到测试事件:", data);
-      socket.emit("test_response", {
-        message: "测试响应成功",
-        timestamp: new Date(),
-      });
-    });
-
-    // 添加调试日志来跟踪所有事件
     socket.onAny((event, ...args) => {
       console.log(`收到socket事件: ${event}`, args);
     });
 
-    // 用户加入
     socket.on("user_join", async (data) => {
       try {
         const { userId, roomId } = data;
 
-        // 存储用户连接信息
+        const timerKey = `${roomId}_${userId}`;
+        if (playerOfflineTimers.has(timerKey)) {
+          clearTimeout(playerOfflineTimers.get(timerKey));
+          playerOfflineTimers.delete(timerKey);
+          console.log(`玩家 ${userId} 重连，取消超时计时器`);
+        }
+
         userSockets.set(userId.toString(), socket);
         socket.userId = userId.toString();
         socket.roomId = roomId;
 
-        // 加入房间
         socket.join(roomId);
 
-        // 获取房间详情
         const room = await roomService.getRoomDetail(roomId, userId);
 
-        // 通知房间内其他玩家有新用户加入并更新房间信息
         socket.to(roomId).emit("room_updated", room);
-
-        // 发送房间详情给当前用户
         socket.emit("room_updated", room);
+
+        const game = await Game.findOne({ roomId: roomId });
+        if (game && game.status === "playing") {
+          const gamePlayer = game.players.find(
+            (p) => p.userId.toString() === userId
+          );
+
+          if (gamePlayer) {
+            const gameData = gameService.formatGame(game, userId);
+            socket.emit("game_started", gameData);
+
+            io.to(roomId).emit("player_reconnected", {
+              userId,
+              message: "玩家重连",
+            });
+
+            console.log(`玩家 ${userId} 重连到游戏 ${game._id}`);
+          }
+        }
+
+        console.log(`玩家 ${userId} 加入房间 ${roomId}`);
       } catch (error) {
         socket.emit("error", { message: error.message });
       }
@@ -86,14 +97,10 @@ function initializeSocket(server) {
     // 玩家准备/取消准备
     socket.on("player_ready", async (data) => {
       try {
-        const { roomId, userId, isReady } = data;
+        const { roomId, userId } = data;
 
-        // 更新房间内玩家的准备状态
-        const room = await roomService.updatePlayerReadyStatus(
-          roomId,
-          userId,
-          isReady
-        );
+        // 更新房间内玩家的准备状态（自动切换）
+        const room = await roomService.togglePlayerReadyStatus(roomId, userId);
 
         // 通知房间内所有玩家房间状态已更新
         io.to(roomId).emit("room_updated", room);
@@ -107,7 +114,7 @@ function initializeSocket(server) {
       try {
         console.log("=== 收到开始游戏请求 ===");
         console.log("收到开始游戏请求:", JSON.stringify(data, null, 2));
-        const { roomId, userId } = data;
+        const { roomId, userId, skipReadyCheck = false } = data;
 
         // 检查是否是房主（房间中的第一个玩家）
         const room = await roomService.getRoomByRoomId(roomId);
@@ -132,13 +139,24 @@ function initializeSocket(server) {
           throw new Error("至少需要2名玩家才能开始游戏");
         }
 
-        // 检查所有玩家是否已准备
-        const allReady = room.players.every((p) => p.isReady);
-        if (!allReady) {
-          throw new Error("所有玩家必须准备后才能开始游戏");
+        // 检查所有玩家是否已准备（除非跳过准备检查）
+        if (!skipReadyCheck) {
+          const allReady = room.players.every((p) => p.isReady);
+          if (!allReady) {
+            throw new Error("所有玩家必须准备后才能开始游戏");
+          }
         }
 
         console.log("所有验证通过，开始创建游戏");
+
+        // 如果跳过准备检查，自动将所有玩家设置为准备状态
+        if (skipReadyCheck) {
+          for (const player of room.players) {
+            player.isReady = true;
+          }
+          await room.save();
+          console.log("已自动将所有玩家设置为准备状态");
+        }
 
         // 开始游戏
         const game = await gameService.startNewGame(roomId);
@@ -149,7 +167,13 @@ function initializeSocket(server) {
         console.log("准备向玩家发送游戏数据，玩家数量:", room.players.length);
         for (const player of room.players) {
           console.log("处理玩家:", player.nickname, "用户ID:", player.userId);
-          const playerGame = gameService.formatGame(game, player.userId);
+
+          // game已经是格式化后的数据，需要重新获取原始Game对象并格式化
+          const rawGame = await Game.findOne({ roomId: game.roomId }).sort({
+            round: -1,
+          });
+          const playerGame = gameService.formatGame(rawGame, player.userId);
+
           console.log(
             `发送给玩家 ${player.nickname} 的游戏数据:`,
             JSON.stringify(playerGame, null, 2)
@@ -248,13 +272,19 @@ function initializeSocket(server) {
               // 如果已经是字符串，直接使用
               playerId = player.userId;
             }
-            
+
             const playerSocket = userSockets.get(playerId);
             if (playerSocket) {
               // 发送给所有玩家，包括操作者自己
               const playerGame = gameService.formatGame(result, player.userId);
               playerSocket.emit("game_state_update", playerGame);
             }
+          }
+
+          // 如果游戏状态为settled，发送room_updated事件以显示结算页面
+          if (result.status === "settled") {
+            const updatedRoom = await roomService.getRoomByRoomId(room.roomId);
+            io.to(room.roomId).emit("room_updated", updatedRoom);
           }
         }
       } catch (error) {
@@ -287,13 +317,19 @@ function initializeSocket(server) {
               // 如果已经是字符串，直接使用
               playerId = player.userId;
             }
-            
+
             const playerSocket = userSockets.get(playerId);
             if (playerSocket) {
               // 发送给所有玩家，包括操作者自己
               const playerGame = gameService.formatGame(result, player.userId);
               playerSocket.emit("game_state_update", playerGame);
             }
+          }
+
+          // 如果游戏状态为settled，发送room_updated事件以显示结算页面
+          if (result.status === "settled") {
+            const updatedRoom = await roomService.getRoomByRoomId(room.roomId);
+            io.to(room.roomId).emit("room_updated", updatedRoom);
           }
         }
 
@@ -329,13 +365,19 @@ function initializeSocket(server) {
               // 如果已经是字符串，直接使用
               playerId = player.userId;
             }
-            
+
             const playerSocket = userSockets.get(playerId);
             if (playerSocket) {
               // 发送给所有玩家，包括操作者自己
               const playerGame = gameService.formatGame(result, player.userId);
               playerSocket.emit("game_state_update", playerGame);
             }
+          }
+
+          // 如果游戏状态为settled，发送room_updated事件以显示结算页面
+          if (result.status === "settled") {
+            const updatedRoom = await roomService.getRoomByRoomId(room.roomId);
+            io.to(room.roomId).emit("room_updated", updatedRoom);
           }
         }
 
@@ -371,13 +413,19 @@ function initializeSocket(server) {
               // 如果已经是字符串，直接使用
               playerId = player.userId;
             }
-            
+
             const playerSocket = userSockets.get(playerId);
             if (playerSocket) {
               // 发送给所有玩家，包括操作者自己
               const playerGame = gameService.formatGame(result, player.userId);
               playerSocket.emit("game_state_update", playerGame);
             }
+          }
+
+          // 如果游戏状态为settled，发送room_updated事件以显示结算页面
+          if (result.status === "settled") {
+            const updatedRoom = await roomService.getRoomByRoomId(room.roomId);
+            io.to(room.roomId).emit("room_updated", updatedRoom);
           }
         }
 
@@ -413,13 +461,19 @@ function initializeSocket(server) {
               // 如果已经是字符串，直接使用
               playerId = player.userId;
             }
-            
+
             const playerSocket = userSockets.get(playerId);
             if (playerSocket) {
               // 发送给所有玩家，包括操作者自己
               const playerGame = gameService.formatGame(result, player.userId);
               playerSocket.emit("game_state_update", playerGame);
             }
+          }
+
+          // 如果游戏状态为settled，发送room_updated事件以显示结算页面
+          if (result.status === "settled") {
+            const updatedRoom = await roomService.getRoomByRoomId(room.roomId);
+            io.to(room.roomId).emit("room_updated", updatedRoom);
           }
         }
 
@@ -455,13 +509,19 @@ function initializeSocket(server) {
               // 如果已经是字符串，直接使用
               playerId = player.userId;
             }
-            
+
             const playerSocket = userSockets.get(playerId);
             if (playerSocket) {
               // 发送给所有玩家，包括操作者自己
               const playerGame = gameService.formatGame(result, player.userId);
               playerSocket.emit("game_state_update", playerGame);
             }
+          }
+
+          // 如果游戏状态为settled，发送room_updated事件以显示结算页面
+          if (result.status === "settled") {
+            const updatedRoom = await roomService.getRoomByRoomId(room.roomId);
+            io.to(room.roomId).emit("room_updated", updatedRoom);
           }
         }
 
@@ -503,48 +563,187 @@ function initializeSocket(server) {
       }
     });
 
-    // 离开房间
     socket.on("leave_room", async (data) => {
       try {
         const { roomId, userId } = data;
 
-        // 离开房间
         socket.leave(roomId);
 
-        // 通知房间内其他玩家用户离开
-        socket.to(roomId).emit("player_left", {
-          userId,
-          message: "玩家离开房间",
-        });
+        const room = await roomService.getRoomByRoomId(roomId);
+        if (!room) {
+          socket.emit("leave_room_success", { message: "成功离开房间" });
+          return;
+        }
 
-        // 从房间中移除玩家
-        const room = await roomService.removePlayerFromRoom(roomId, userId);
+        const game = await Game.findOne({ roomId: roomId });
 
-        // 如果房间仍然存在，通知所有玩家房间状态已更新
-        if (room) {
-          io.to(roomId).emit("room_updated", room);
+        if (game && game.status === "playing") {
+          const gamePlayer = game.players.find(
+            (p) => p.userId.toString() === userId
+          );
+
+          if (gamePlayer && gamePlayer.status === "playing") {
+            console.log(`玩家 ${userId} 在游戏进行中退出，标记为弃牌`);
+            await gameService.fold(game._id, userId);
+
+            const updatedGame = await Game.findById(game._id);
+            if (updatedGame && room.players) {
+              for (const player of room.players) {
+                let playerId;
+                if (typeof player.userId === "object" && player.userId._id) {
+                  playerId = player.userId._id.toString();
+                } else if (
+                  typeof player.userId === "object" &&
+                  player.userId.toString
+                ) {
+                  playerId = player.userId.toString();
+                } else {
+                  playerId = player.userId;
+                }
+
+                const playerSocket = userSockets.get(playerId);
+                if (playerSocket) {
+                  const playerGame = gameService.formatGame(
+                    updatedGame,
+                    player.userId
+                  );
+                  playerSocket.emit("game_state_update", playerGame);
+                }
+              }
+            }
+
+            io.to(roomId).emit("player_folded", {
+              userId,
+              message: "玩家退出游戏",
+            });
+          }
+        }
+
+        const updatedRoom = await roomService.removePlayerFromRoom(
+          roomId,
+          userId
+        );
+
+        if (updatedRoom) {
+          if (updatedRoom.creator._id.toString() === userId) {
+            const nextPlayer = updatedRoom.players[0];
+            if (nextPlayer) {
+              updatedRoom.creator = nextPlayer.userId;
+              await updatedRoom.save();
+
+              io.to(roomId).emit("creator_changed", {
+                newCreatorId: nextPlayer.userId.toString(),
+                message: "房主已转移",
+              });
+              console.log(`房主从 ${userId} 转移到 ${nextPlayer.userId}`);
+            }
+          }
+
+          io.to(roomId).emit("room_updated", updatedRoom);
         } else {
-          // 如果房间已被删除（最后一个玩家离开），通知所有玩家房间已解散
           io.to(roomId).emit("room_disbanded", {
             message: "房间已解散（最后一个玩家离开）",
             roomId: roomId,
           });
         }
 
-        // 发送离开成功的响应
         socket.emit("leave_room_success", { message: "成功离开房间" });
       } catch (error) {
         socket.emit("error", { message: error.message });
       }
     });
 
-    // 断开连接
-    socket.on("disconnect", () => {
+    socket.on("disconnect", async () => {
       console.log("用户断开连接:", socket.id);
 
-      // 清理用户连接信息
       if (socket.userId) {
         userSockets.delete(socket.userId);
+
+        if (socket.roomId) {
+          try {
+            const room = await roomService.getRoomByRoomId(socket.roomId);
+            if (!room) {
+              return;
+            }
+
+            const player = room.players.find(
+              (p) => p.userId.toString() === socket.userId
+            );
+
+            if (!player) {
+              return;
+            }
+
+            const game = await Game.findOne({ roomId: socket.roomId });
+
+            if (game && game.status === "playing") {
+              const gamePlayer = game.players.find(
+                (p) => p.userId.toString() === socket.userId
+              );
+
+              if (gamePlayer && gamePlayer.status === "playing") {
+                console.log(
+                  `玩家 ${socket.userId} 在游戏中断线，启动超时计时器`
+                );
+
+                const timerId = setTimeout(async () => {
+                  try {
+                    console.log(`玩家 ${socket.userId} 超时未重连，自动弃牌`);
+                    await gameService.fold(game._id, socket.userId);
+
+                    const updatedGame = await Game.findById(game._id);
+                    if (updatedGame && room.players) {
+                      for (const player of room.players) {
+                        let playerId;
+                        if (
+                          typeof player.userId === "object" &&
+                          player.userId._id
+                        ) {
+                          playerId = player.userId._id.toString();
+                        } else if (
+                          typeof player.userId === "object" &&
+                          player.userId.toString
+                        ) {
+                          playerId = player.userId.toString();
+                        } else {
+                          playerId = player.userId;
+                        }
+
+                        const playerSocket = userSockets.get(playerId);
+                        if (playerSocket) {
+                          const playerGame = gameService.formatGame(
+                            updatedGame,
+                            player.userId
+                          );
+                          playerSocket.emit("game_state_update", playerGame);
+                        }
+                      }
+                    }
+
+                    io.to(socket.roomId).emit("player_offline_folded", {
+                      userId: socket.userId,
+                      message: "玩家断线超时，自动弃牌",
+                    });
+                  } catch (error) {
+                    console.error("处理断线超时错误:", error);
+                  }
+                }, 60000);
+
+                playerOfflineTimers.set(
+                  `${socket.roomId}_${socket.userId}`,
+                  timerId
+                );
+              }
+            }
+
+            io.to(socket.roomId).emit("player_offline", {
+              userId: socket.userId,
+              message: "玩家离线",
+            });
+          } catch (error) {
+            console.error("处理断开连接错误:", error);
+          }
+        }
       }
     });
   });

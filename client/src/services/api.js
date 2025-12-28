@@ -1,9 +1,17 @@
+/*
+ * @Author: Wensong Huang wensong.huang@eeoa.com
+ * @Date: 2025-12-19 18:37:47
+ * @LastEditors: Wensong Huang wensong.huang@eeoa.com
+ * @LastEditTime: 2025-12-27 10:27:20
+ * @FilePath: /poke_game/client/src/services/api.js
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+ */
 // client/src/services/api.js
 import axios from "axios";
 
 // 创建axios实例
 const apiClient = axios.create({
-  baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:3001/api",
+  baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/api",
   timeout: 10000,
 });
 

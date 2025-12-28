@@ -2,13 +2,13 @@
 <template>
   <div class="bet-controls">
     <div class="bet-info">
-      <span class="bet-info-item">
+      <!-- <span class="bet-info-item">
         <span class="bet-label">当前</span>
         <span class="bet-value">💰{{ currentBet }}</span>
-      </span>
+      </span> -->
       <span class="bet-info-item">
         <span class="bet-label">最小</span>
-        <span class="bet-value">💰{{ minBet }}</span>
+        <span class="bet-value">💰{{ minRaiseAmount }}</span>
       </span>
       <span class="bet-info-item">
         <span class="bet-label">金币</span>
@@ -30,10 +30,10 @@
         @click="handleCall"
         class="action-btn call-btn"
         :disabled="!canCall || isActionLoading || !isPlayerTurn"
-        :title="canCall && !isActionLoading && isPlayerTurn ? `跟注 ${callAmount}` : (isActionLoading ? '操作处理中...' : !isPlayerTurn ? '等待其他玩家操作' : '无法跟注')"
+        :title="canCall && !isActionLoading && isPlayerTurn ? `跟注 ${minRaiseAmount}` : (isActionLoading ? '操作处理中...' : !isPlayerTurn ? '等待其他玩家操作' : '无法跟注')"
       >
         <span class="btn-icon">📞</span>
-        <span class="btn-text">{{ callAmount }}</span>
+        <span class="btn-text">{{ minRaiseAmount }}</span>
       </button>
       
       <button
@@ -57,8 +57,8 @@
       <button
         @click="handleCompare"
         class="action-btn compare-btn"
-        :disabled="!canCompare || isActionLoading || !isPlayerTurn"
-        :title="canCompare && !isActionLoading && isPlayerTurn ? '比牌' : (isActionLoading ? '操作处理中...' : !isPlayerTurn ? '等待其他玩家操作' : '无法比牌')"
+        :disabled="!canCompare || isActionLoading || !isPlayerTurn || !canCompareByRound"
+        :title="canCompare && !isActionLoading && isPlayerTurn && canCompareByRound ? '比牌' : (isActionLoading ? '操作处理中...' : !isPlayerTurn ? '等待其他玩家操作' : !canCompareByRound ? '前三轮不能比牌' : '无法比牌')"
       >
         <span class="btn-icon">⚔️</span>
       </button>
@@ -70,8 +70,11 @@
           <h3>加注</h3>
           <div class="dialog-content">
             <div class="raise-info">
-              <span>最小: {{ minRaiseAmount }}</span>
+              <span>最小: {{ minRaiseAmount + 1 }}</span>
               <span>最大: {{ maxRaiseAmount }}</span>
+            </div>
+            <div v-if="hasSeenCards" class="raise-notice">
+              看牌后加注金额将翻倍
             </div>
             <input
               v-model.number="raiseAmount"
@@ -121,10 +124,6 @@ import socket from '@/utils/socket';
 export default {
   name: 'BetControls',
   props: {
-    currentBet: {
-      type: Number,
-      default: 0
-    },
     minBet: {
       type: Number,
       default: 0
@@ -136,6 +135,10 @@ export default {
     activePlayers: {
       type: Array,
       default: () => []
+    },
+    hasSeenCards: {
+      type: Boolean,
+      default: false
     },
     canSeeCards: {
       type: Boolean,
@@ -171,11 +174,15 @@ export default {
     },
     gameId: {
       type: String,
-      required: true
+      default: ''
     },
     userId: {
       type: String,
       required: true
+    },
+    bettingRound: {
+      type: Number,
+      default: 1
     }
   },
   setup(props) {
@@ -184,16 +191,29 @@ export default {
     const raiseAmount = ref(0);
     const isActionLoading = ref(false);
     
-    const callAmount = computed(() => {
-      return props.minBet - props.currentBet;
-    });
+    // const callAmount = computed(() => {
+    //   if (props.hasSeenCards) {
+    //     return props.minBet * 2 - props.currentBet;
+    //   }
+    //   console.log(props.minBet, props.currentBet);
+    //   return props.minBet - props.currentBet;
+    // });
     
     const minRaiseAmount = computed(() => {
-      return props.minBet + 50; // 最小加注额度
+      const multiplier = props.hasSeenCards ? 2 : 1;
+      console.log(props.minBet, multiplier);
+      return props.minBet * multiplier;
     });
     
     const maxRaiseAmount = computed(() => {
-      return props.playerGold; // 最大可加注金额
+      const multiplier = props.hasSeenCards ? 2 : 1;
+      const maxByRule = props.minBet * multiplier * 5;
+      const maxByGold = props.hasSeenCards ? Math.floor(props.playerGold / 2) : props.playerGold;
+      return Math.max(maxByRule, maxByGold);
+    });
+    
+    const canCompareByRound = computed(() => {
+      return props.bettingRound > 3;
     });
     
     // 操作函数 - 直接发送socket请求
@@ -202,10 +222,12 @@ export default {
       
       isActionLoading.value = true;
       try {
-        socket.emit('see_cards', {
+        const data = {
           gameId: props.gameId,
           userId: props.userId
-        });
+        };
+        console.log('BetControls: Emit see_cards', data);
+        socket.emit('see_cards', data);
       } catch (error) {
         console.error('看牌失败:', error);
       }
@@ -237,9 +259,11 @@ export default {
     const confirmRaise = async () => {
       if (!props.gameId || isActionLoading.value) return;
       
-      // 验证加注金额
-      const minRaise = props.minBet + 50;
-      const maxRaise = props.playerGold;
+      const multiplier = props.hasSeenCards ? 2 : 1;
+      const minRaise = props.minBet * multiplier;
+      const maxByRule = props.minBet * multiplier * 5;
+      const maxByGold = props.hasSeenCards ? Math.floor(props.playerGold / 2) : props.playerGold;
+      const maxRaise = Math.max(maxByRule, maxByGold);
       
       if (raiseAmount.value < minRaise || raiseAmount.value > maxRaise) {
         alert(`加注金额必须在 ${minRaise} 到 ${maxRaise} 之间`);
@@ -254,7 +278,6 @@ export default {
           amount: raiseAmount.value
         });
         
-        // 关闭对话框
         showRaiseDialog.value = false;
 
       } catch (error) {
@@ -268,10 +291,12 @@ export default {
       
       isActionLoading.value = true;
       try {
-        socket.emit('fold', {
+        const data = {
           gameId: props.gameId,
           userId: props.userId
-        });
+        };
+        console.log('BetControls: Emit fold', data);
+        socket.emit('fold', data);
         
         
       } catch (error) {
@@ -339,9 +364,10 @@ export default {
       showCompareDialog,
       raiseAmount,
       isActionLoading,
-      callAmount,
+      // callAmount,
       minRaiseAmount,
       maxRaiseAmount,
+      canCompareByRound,
       handleSeeCards,
       handleCall,
       handleRaise,
@@ -525,6 +551,17 @@ export default {
   margin-bottom: 12px;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.7);
+}
+
+.raise-notice {
+  padding: 8px 12px;
+  background: rgba(245, 87, 108, 0.15);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #f5576c;
+  text-align: center;
+  font-weight: 500;
 }
 
 .dialog-input {

@@ -31,10 +31,11 @@ class RoomService {
   /**
    * 加入房间
    * @param {string} roomId 房间号
+   * @param {string} password 房间密码（可选）
    * @returns {Promise} 加入结果
    */
-  async joinRoom(roomId) {
-    return request.post("/rooms/join", { roomId });
+  async joinRoom(roomId, password) {
+    return request.post("/rooms/join", { roomId, password });
   }
 
   /**

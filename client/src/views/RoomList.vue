@@ -54,11 +54,18 @@
           v-for="room in rooms"
           :key="room.roomId"
           :room="room"
+          :current-user-id="authStore?.user?.id"
           @join="handleJoinRoom"
           class="room-card"
         />
       </div>
     </div>
+
+    <PasswordModal
+      :visible="showPasswordModal"
+      @confirm="handlePasswordConfirm"
+      @cancel="showPasswordModal = false"
+    />
   </div>
 </template>
 
@@ -66,19 +73,25 @@
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import RoomCard from '@/components/RoomCard.vue';
+import PasswordModal from '@/components/PasswordModal.vue';
 import { useRoomStore } from '@/stores/room';
+import { useAuthStore } from '@/stores/auth';
 
 export default {
   name: 'RoomList',
   components: {
-    RoomCard
+    RoomCard,
+    PasswordModal
   },
   setup() {
     const router = useRouter();
     const roomStore = useRoomStore();
+    const authStore = useAuthStore();
     
     const searchRoomId = ref('');
     const isLoading = ref(false);
+    const showPasswordModal = ref(false);
+    const searchedRoom = ref(null);
     
     const rooms = ref([]);
     
@@ -105,13 +118,17 @@ export default {
       try {
         isLoading.value = true;
         const room = await roomStore.searchRoom(searchRoomId.value.trim());
-        console.log(room);
-        // 直接跳转到房间页面
+        
         if (room && room?.data?.data && room.data?.data.roomId) {
-          console.log(room);
-          router.push(`/rooms/${room.data?.data.roomId}`);
+          searchedRoom.value = room.data.data;
+          
+          if (searchedRoom.value.hasPassword) {
+            showPasswordModal.value = true;
+          } else {
+            await handleJoinRoom(searchedRoom.value.roomId);
+          }
         } else {
-          // alert('房间信息不完整');
+          alert('房间不存在');
         }
       } catch (error) {
         console.error('搜索房间失败:', error);
@@ -121,25 +138,20 @@ export default {
       }
     };
     
-    const handleJoinRoom = async (roomId) => {
+    const handlePasswordConfirm = async (password) => {
+      if (searchedRoom.value) {
+        await handleJoinRoom(searchedRoom.value.roomId, password);
+      }
+    };
+    
+    const handleJoinRoom = async (roomId, password) => {
       try {
         isLoading.value = true;
-        // 获取房间详情以获取房间初始金币
-        const room = await roomStore.searchRoom(roomId);
-        console.log(room);
+        const joinResponse = await roomStore.joinRoom(roomId, password);
         
-        // 检查房间数据完整性
-        if (!room || !room.data || !room.data.defaultRoomGold) {
-          alert('房间信息不完整');
-          return;
+        if (joinResponse?.data?.data?.roomId) {
+          router.push(`/rooms/${joinResponse.data.data.roomId}`);
         }
-        
-        const joinResponse = await roomStore.joinRoom(roomId);
-
-        console.log(joinResponse);
-        
-        // 跳转到游戏房间
-        // router.push(`/rooms/${roomId}`);
       } catch (error) {
         console.error('加入房间失败:', error);
         alert(error.message || '加入房间失败');
@@ -152,8 +164,11 @@ export default {
       searchRoomId,
       isLoading,
       rooms,
+      showPasswordModal,
       handleSearch,
-      handleJoinRoom
+      handlePasswordConfirm,
+      handleJoinRoom,
+      authStore
     };
   }
 };

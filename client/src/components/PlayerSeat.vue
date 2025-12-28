@@ -16,10 +16,10 @@
           <div class="player-avatar">
             <div class="avatar-placeholder">👤</div>
           </div>
-          <div class="player-name">{{ player.nickname || '未知玩家' }}</div>
         </div>
         <div class="player-right">
-          <div class="player-gold">💰 {{ player.roomGold || 0 }}</div>
+          <!-- <div class="player-gold">💰 {{ player.roomGold || 0 }}</div> -->
+          <div class="player-name">{{ player.nickname || '未知玩家' }}</div>
           <div class="player-status" :class="player.status || 'waiting'">
             {{ getStatusText(player.status) }}
           </div>

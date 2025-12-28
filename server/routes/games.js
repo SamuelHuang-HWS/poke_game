@@ -1,3 +1,11 @@
+/*
+ * @Author: Wensong Huang wensong.huang@eeoa.com
+ * @Date: 2025-12-19 18:29:07
+ * @LastEditors: Wensong Huang wensong.huang@eeoa.com
+ * @LastEditTime: 2025-12-26 13:20:32
+ * @FilePath: /poke_game/server/routes/games.js
+ * @Description: 这是默认设置,请设置`customMade`, 打开koroFileHeader查看配置 进行设置: https://github.com/OBKoro1/koro1FileHeader/wiki/%E9%85%8D%E7%BD%AE
+ */
 // server/routes/games.js
 const express = require('express');
 const { authenticate } = require('../middleware/auth');
@@ -8,7 +16,10 @@ const {
   raise, 
   fold, 
   compare, 
-  getGameDetail 
+  getGameDetail,
+  startNextRound,
+  handlePlayerTimeout,
+  forceCompare
 } = require('../controllers/gameController');
 
 const router = express.Router();
@@ -61,5 +72,26 @@ router.post('/compare', authenticate, compare);
  * @access Private
  */
 router.get('/:gameId', authenticate, getGameDetail);
+
+/**
+ * @route POST /api/games/next-round
+ * @desc 开始下一局
+ * @access Private
+ */
+router.post('/next-round', authenticate, startNextRound);
+
+/**
+ * @route POST /api/games/timeout
+ * @desc 处理玩家超时
+ * @access Private
+ */
+router.post('/timeout', authenticate, handlePlayerTimeout);
+
+/**
+ * @route POST /api/games/force-compare
+ * @desc 强制比牌
+ * @access Private
+ */
+router.post('/force-compare', authenticate, forceCompare);
 
 module.exports = router;

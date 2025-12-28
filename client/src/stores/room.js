@@ -58,12 +58,12 @@ export const useRoomStore = defineStore("room", {
     /**
      * 加入房间
      */
-    async joinRoom(roomId) {
+    async joinRoom(roomId, password) {
       try {
         this.isLoading = true;
         this.error = null;
 
-        const response = await roomService.joinRoom(roomId);
+        const response = await roomService.joinRoom(roomId, password);
 
         if (response?.data?.data) {
           this.currentRoom = response?.data?.data || "";
@@ -73,7 +73,7 @@ export const useRoomStore = defineStore("room", {
           throw error;
         }
       } catch (error) {
-        console.log(response);
+        console.log(error);
         this.error = error.message || "加入房间失败";
         throw error;
       } finally {

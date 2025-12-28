@@ -6,9 +6,12 @@ class SocketManager {
     this.socket = null;
     this.isConnected = false;
     this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 5;
-    this.reconnectDelay = 1000; // 1秒
+    this.maxReconnectAttempts = 10;
+    this.reconnectDelay = 1000;
     this.isReconnecting = false;
+    this.currentRoomId = null;
+    this.currentUserId = null;
+    this.eventListeners = new Map();
   }
 
   /**
@@ -22,23 +25,35 @@ class SocketManager {
       this.disconnect();
     }
 
-    // 创建Socket连接
     this.socket = io(url, {
-      transports: ["websocket"],
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: this.maxReconnectAttempts,
+      reconnectionDelay: this.reconnectDelay,
+      reconnectionDelayMax: 5000,
+      timeout: 10000,
+      forceNew: true,
       ...options,
     });
 
-    // 连接事件监听
     this.socket.on("connect", () => {
       this.isConnected = true;
-      this.reconnectAttempts = 0; // 重置重连次数
+      this.reconnectAttempts = 0;
       this.isReconnecting = false;
+
+      if (this.currentRoomId && this.currentUserId) {
+        console.log("重连成功，重新加入房间");
+        this.emit("user_join", {
+          userId: this.currentUserId,
+          roomId: this.currentRoomId,
+        });
+      }
     });
 
     this.socket.on("disconnect", (reason) => {
       this.isConnected = false;
+      console.log("Socket断开连接:", reason);
       if (reason === "io server disconnect") {
-        // 服务器断开连接，需要手动重连
         this.reconnect();
       }
     });
@@ -48,25 +63,22 @@ class SocketManager {
       this.isConnected = false;
     });
 
-    // 添加更多调试事件监听
-    this.socket.on("connect_timeout", (timeout) => {});
-
-    this.socket.on("error", (error) => {
-      console.error("Socket.IO错误:", error);
+    this.socket.on("player_offline", (data) => {
+      console.log("玩家离线:", data);
     });
 
-    this.socket.on("reconnect", (attempt) => {});
-
-    this.socket.on("reconnect_attempt", (attempt) => {});
-
-    this.socket.on("reconnecting", (delay, attempt) => {});
-
-    this.socket.on("reconnect_error", (error) => {
-      console.error("Socket.IO重新连接错误:", error);
+    this.socket.on("player_reconnected", (data) => {
+      console.log("玩家重连:", data);
     });
 
-    this.socket.on("reconnect_failed", () => {
-      console.error("Socket.IO重新连接失败");
+    this.socket.on("creator_changed", (data) => {
+      console.log("房主已转移:", data);
+    });
+
+    this.socket.on("room_disbanded", (data) => {
+      console.log("房间已解散:", data);
+      this.currentRoomId = null;
+      this.currentUserId = null;
     });
 
     return this.socket;
@@ -80,7 +92,20 @@ class SocketManager {
       this.socket.disconnect();
       this.socket = null;
       this.isConnected = false;
+      this.currentRoomId = null;
+      this.currentUserId = null;
+      this.eventListeners.clear();
     }
+  }
+
+  setCurrentRoom(roomId, userId) {
+    this.currentRoomId = roomId;
+    this.currentUserId = userId;
+  }
+
+  clearCurrentRoom() {
+    this.currentRoomId = null;
+    this.currentUserId = null;
   }
 
   /**
@@ -90,10 +115,11 @@ class SocketManager {
    */
   emit(event, data) {
     if (!this.isConnected) {
-      console.warn("Socket未连接，无法发送事件:", event);
+      console.warn("Socket: Not connected, cannot emit event", { event, data });
       return;
     }
 
+    console.log("Socket: Emit", { event, data });
     this.socket.emit(event, data);
   }
 
@@ -104,7 +130,9 @@ class SocketManager {
    */
   on(event, callback) {
     if (!this.socket) {
-      console.warn("Socket未初始化，无法监听事件:", event);
+      console.warn("Socket: Not initialized, cannot listen to event", {
+        event,
+      });
       return;
     }
 

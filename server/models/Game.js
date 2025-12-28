@@ -70,15 +70,20 @@ const gameSchema = new mongoose.Schema(
           type: Boolean,
           default: false,
         },
-        // 当前下注额
-        currentBet: {
-          type: Number,
-          default: 0,
-        },
         // 总下注额
         totalBet: {
           type: Number,
           default: 0,
+        },
+        // 本轮已下注额
+        currentRoundBet: {
+          type: Number,
+          default: 0,
+        },
+        // 本轮是否已操作
+        hasActedThisRound: {
+          type: Boolean,
+          default: false,
         },
         // 状态
         status: {
