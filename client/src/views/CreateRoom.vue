@@ -74,12 +74,14 @@
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useRoomStore } from '../stores/room';
+import { useToast } from '@/composables/useToast';
 
 export default {
   name: 'CreateRoom',
   setup() {
     const router = useRouter();
     const roomStore = useRoomStore();
+    const toast = useToast();
     
     const formData = ref({
       baseBet: 1,
@@ -98,7 +100,7 @@ export default {
         // 创建成功，跳转到房间页面
         router.push(`/rooms/${response.data.data.roomId}`);
       } catch (error) {
-        alert(error.message || '创建房间失败');
+        toast.error(error.message || '创建房间失败');
       } finally {
         isLoading.value = false;
       }

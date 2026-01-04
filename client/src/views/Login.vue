@@ -51,12 +51,14 @@
 import { ref } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import { useToast } from '@/composables/useToast';
 
 export default {
   name: 'Login',
   setup() {
     const router = useRouter();
     const authStore = useAuthStore();
+    const toast = useToast();
     
     const formData = ref({
       phoneNumber: '',
@@ -77,7 +79,7 @@ export default {
         // 登录成功，跳转到首页
         router.replace('/');
       } catch (error) {
-        alert(error.message || '登录失败');
+        toast.error(error.message || '登录失败');
       } finally {
         isLoading.value = false;
       }

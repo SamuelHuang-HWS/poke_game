@@ -135,6 +135,7 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import socket from '@/utils/socket';
 import Card from '@/components/Card.vue';
+import { useToast } from '@/composables/useToast';
 
 export default {
   name: 'BetControls',
@@ -215,6 +216,7 @@ export default {
     const showCompareDialog = ref(false);
     const raiseAmount = ref(0);
     const isActionLoading = ref(false);
+    const toast = useToast();
     
 
 
@@ -295,7 +297,7 @@ export default {
       const maxRaise = Math.max(maxByRule, maxByGold);
       
       if (raiseAmount.value < minRaise || raiseAmount.value > maxRaise) {
-        alert(`加注金额必须在 ${minRaise} 到 ${maxRaise} 之间`);
+        toast.error(`加注金额必须在 ${minRaise} 到 ${maxRaise} 之间`);
         return;
       }
       

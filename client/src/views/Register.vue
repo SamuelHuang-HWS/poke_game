@@ -73,12 +73,14 @@
 import { ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '@/stores/auth';
+import { useToast } from '@/composables/useToast';
 
 export default {
   name: 'Register',
   setup() {
     const router = useRouter();
     const authStore = useAuthStore();
+    const toast = useToast();
     
     const formData = ref({
       username: '',
@@ -100,7 +102,7 @@ export default {
     const handleRegister = async () => {
       // 检查密码是否匹配
       if (formData.value.password !== formData.value.confirmPassword) {
-        alert('两次输入的密码不一致');
+        toast.error('两次输入的密码不一致');
         return;
       }
       
@@ -114,10 +116,10 @@ export default {
         );
         
         // 注册成功，跳转到首页
-        alert('注册成功！');
+        toast.success('注册成功！');
         router.push('/');
       } catch (error) {
-        alert(error.message || '注册失败');
+        toast.error(error.message || '注册失败');
       } finally {
         isLoading.value = false;
       }

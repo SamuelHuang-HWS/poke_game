@@ -67,12 +67,14 @@
 import { ref, onMounted } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth';
+import { useToast } from '@/composables/useToast';
 
 export default {
   name: 'Profile',
   setup() {
     const router = useRouter();
     const authStore = useAuthStore();
+    const toast = useToast();
     
     const user = ref(null);
     const stats = ref({
@@ -109,10 +111,10 @@ export default {
         if (Object.keys(updateData).length > 0) {
           await authStore.updateUser(updateData);
           user.value = authStore.user;
-          alert('资料更新成功');
+          toast.success('资料更新成功');
         }
       } catch (error) {
-        alert(error.message || '更新资料失败');
+        toast.error(error.message || '更新资料失败');
       } finally {
         isLoading.value = false;
       }

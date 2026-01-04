@@ -76,6 +76,7 @@ import RoomCard from '@/components/RoomCard.vue';
 import PasswordModal from '@/components/PasswordModal.vue';
 import { useRoomStore } from '@/stores/room';
 import { useAuthStore } from '@/stores/auth';
+import { useToast } from '@/composables/useToast';
 
 export default {
   name: 'RoomList',
@@ -87,6 +88,7 @@ export default {
     const router = useRouter();
     const roomStore = useRoomStore();
     const authStore = useAuthStore();
+    const toast = useToast();
     
     const searchRoomId = ref('');
     const isLoading = ref(false);
@@ -106,7 +108,7 @@ export default {
         rooms.value = roomList;
       } catch (error) {
         console.error('加载房间列表失败:', error);
-        alert(error.message || '加载房间列表失败');
+        toast.error(error.message || '加载房间列表失败');
       } finally {
         isLoading.value = false;
       }
@@ -128,11 +130,11 @@ export default {
             await handleJoinRoom(searchedRoom.value.roomId);
           }
         } else {
-          alert('房间不存在');
+          toast.error('房间不存在');
         }
       } catch (error) {
         console.error('搜索房间失败:', error);
-        alert(error.message || '房间不存在');
+        toast.error(error.message || '房间不存在');
       } finally {
         isLoading.value = false;
       }
@@ -154,7 +156,7 @@ export default {
         }
       } catch (error) {
         console.error('加入房间失败:', error);
-        alert(error.message || '加入房间失败');
+        toast.error(error.message || '加入房间失败');
       } finally {
         isLoading.value = false;
       }

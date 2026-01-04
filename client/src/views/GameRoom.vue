@@ -793,7 +793,7 @@ export default {
       
       socket.on('error', (error) => {
         console.log('GameRoom: Received error', error);
-        alert(error.message || '发生未知错误');
+        toast.error(error.message || '发生未知错误');
       });
       
       socket.on('player_confirmed', (data) => {
@@ -835,7 +835,7 @@ export default {
       socket.on('room_disbanded', (data) => {
         console.log('GameRoom: Received room_disbanded', data);
         // 显示房间解散消息
-        alert(data.message);
+        toast.info(data.message);
         // 跳转到首页
         router.push('/');
       });
@@ -950,7 +950,7 @@ export default {
           errorMessage = error.message;
         }
         
-        alert(errorMessage);
+        toast.error(errorMessage);
         router.push('/');
       }
     });
