@@ -1,15 +1,22 @@
-// client/src/components/Card.vue
 <template>
-  <div v-if="isValidCard" class="card" :class="{ 'face-up': isFaceUp, 'face-down': !isFaceUp }">
-    <div v-if="isFaceUp" class="card-front">
-      <div class="card-rank">{{ displayRank }}</div>
-      <div class="card-suit">{{ suitSymbol }}</div>
+  <div class="card-container">
+    <div v-if="isValidCard" class="card" :class="{ 'face-up': isFaceUp, 'face-down': !isFaceUp }">
+      <div class="card-face card-front">
+        <img :src="cardImageSrc" alt="front" class="card-img" />
+      </div>
+      <div class="card-face card-back">
+        <img :src="backImageSrc" alt="back" class="card-img" />
+      </div>
     </div>
-    <div v-else class="card-back"></div>
   </div>
 </template>
 
 <script>
+import { computed } from 'vue';
+
+// Pre-load card back
+const cardBackUrl = new URL('@/assets/cards/card_back.png', import.meta.url).href;
+
 export default {
   name: 'Card',
   props: {
@@ -26,87 +33,101 @@ export default {
       default: false
     }
   },
-  computed: {
-    isValidCard() {
-      return this.suit !== undefined && this.rank !== undefined && this.rank > 0;
-    },
-    suitSymbol() {
+  setup(props) {
+    const isValidCard = computed(() => {
+      // Basic validation
+      return props.suit !== undefined && props.rank !== undefined && props.rank > 0;
+    });
+
+    const cardImageSrc = computed(() => {
+      // Suit Map (Symbol -> Filename)
       const suitMap = {
-        '♠': '♠',
-        '♥': '♥',
-        '♣': '♣',
-        '♦': '♦'
+        '♠': 'spades',
+        '♥': 'hearts',
+        '♣': 'clubs',
+        '♦': 'diamonds'
       };
-      return suitMap[this.suit] || '';
-    },
-    displayRank() {
-      const rankMap = {
-        3: '3',
-        4: '4',
-        5: '5',
-        6: '6',
-        7: '7',
-        8: '8',
-        9: '9',
-        10: '10',
-        11: 'J',
-        12: 'Q',
-        13: 'K',
-        14: 'A',
-        15: '2'
-      };
-      return rankMap[this.rank] || '';
-    }
+      
+      const suitName = suitMap[props.suit];
+      if (!suitName) return ''; 
+
+      // Rank Map (Number -> Filename)
+      let rankName = '';
+      if (props.rank === 15) {
+        rankName = '2';
+      } else if (props.rank === 14) {
+        rankName = 'a';
+      } else if (props.rank === 11) {
+        rankName = 'j';
+      } else if (props.rank === 12) {
+        rankName = 'q';
+      } else if (props.rank === 13) {
+        rankName = 'k';
+      } else {
+        rankName = props.rank.toString();
+      }
+
+      // Vite dynamic URL
+      return new URL(`../assets/cards/${suitName}_${rankName}.png`, import.meta.url).href;
+    });
+
+    const backImageSrc = computed(() => {
+      return cardBackUrl;
+    });
+
+    return {
+      isValidCard,
+      cardImageSrc,
+      backImageSrc
+    };
   }
 };
 </script>
 
 <style scoped>
-.card {
-  width: 60px;
-  height: 80px;
-  border-radius: 8px;
-  position: relative;
-  transition: transform 0.3s ease;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+.card-container {
+  perspective: 1000px;
+  width: 120px;
+  height: 168px;
 }
 
-.card.face-up {
-  background: white;
-  border: 1px solid #ddd;
+.card {
+  width: 100%;
+  height: 100%;
+  position: relative;
+  transform-style: preserve-3d;
+  transition: transform 0.6s;
+  /* Use transparent background to avoid white corners if image has transparency */
+  background-color: transparent; 
+  border-radius: 6px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
 }
 
 .card.face-down {
-  background: linear-gradient(135deg, #6c5ce7, #00d2d3);
-  border: 1px solid #4a3aad;
+  transform: rotateY(180deg);
+}
+
+.card-face {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  backface-visibility: hidden;
+  border-radius: 6px;
 }
 
 .card-front {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-  color: #333;
-}
-
-.card-rank {
-  font-size: 20px;
-  font-weight: bold;
-  margin-bottom: 5px;
-}
-
-.card-suit {
-  font-size: 24px;
+  transform: rotateY(0deg);
 }
 
 .card-back {
-  height: 100%;
-  background: linear-gradient(135deg, #6c5ce7, #00d2d3);
-  border-radius: 8px;
+  transform: rotateY(180deg);
 }
 
-.card:hover {
-  transform: translateY(-5px);
+.card-img {
+  width: 100%;
+  height: 100%;
+  object-fit: fill; /* Fill the container exactly */
+  display: block;
+  border-radius: 6px;
 }
 </style>

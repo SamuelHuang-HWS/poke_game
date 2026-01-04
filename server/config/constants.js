@@ -40,6 +40,7 @@ module.exports = {
     BETTING: "betting", // 下注阶段
     COMPARING: "comparing", // 比牌阶段
     SETTLED: "settled", // 已结算
+    FINISHED: "finished", // 游戏结束
   },
 
   // 玩家状态

@@ -9,7 +9,14 @@ const gameSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+    // 当前局数
     round: {
+      type: Number,
+      required: true,
+      default: 1,
+    },
+    // 总局数
+    totalRounds: {
       type: Number,
       required: true,
     },
@@ -33,6 +40,10 @@ const gameSchema = new mongoose.Schema(
     currentPlayerIndex: {
       type: Number,
       default: 0,
+    },
+    // 当前操作截止时间
+    currentTurnDeadline: {
+      type: Date,
     },
     // 庄家玩家索引
     dealerIndex: {
@@ -111,6 +122,48 @@ const gameSchema = new mongoose.Schema(
       type: String,
       enum: ["normal", "all_fold", "timeout"],
     },
+    // 局历史记录
+    roundHistory: [
+      {
+        round: Number,
+        winner: {
+          userId: mongoose.Schema.Types.ObjectId,
+          nickname: String,
+          cards: [
+            {
+              suit: String,
+              rank: Number,
+            },
+          ],
+          cardType: String,
+          winnings: Number,
+        },
+        players: [
+          {
+            userId: mongoose.Schema.Types.ObjectId,
+            nickname: String,
+            cards: [
+              {
+                suit: String,
+                rank: Number,
+              },
+            ],
+            cardType: String,
+            result: String,
+            goldChange: Number,
+          },
+        ],
+      },
+    ],
+    // 玩家确认状态
+    playerConfirmations: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {},
+    },
+    // 结算截止时间
+    settlementDeadline: {
+      type: Date,
+    },
     createdAt: {
       type: Date,
       default: Date.now,
@@ -131,8 +184,10 @@ gameSchema.index({ roomId: 1, round: 1 });
 
 // 开始游戏
 gameSchema.methods.startGame = function () {
-  this.status = GAME_STATUS.BETTING;
+  this.status = GAME_STATUS.PLAYING;
   this.updatedAt = new Date();
+  // 设置初始30秒操作倒计时
+  this.currentTurnDeadline = new Date(Date.now() + 30000);
   return this;
 };
 

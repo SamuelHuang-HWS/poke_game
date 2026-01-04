@@ -357,4 +357,107 @@ export default {
     align-items: center;
   }
 }
+
+/* 移动端横屏适配 */
+@media screen and (orientation: landscape) and (max-height: 600px) {
+  .profile-container {
+    padding-bottom: 20px;
+    height: 100vh;
+    overflow-y: auto;
+  }
+
+  .navbar {
+    padding: 5px 15px;
+    flex-direction: row; 
+    min-height: 40px;
+  }
+  
+  .title {
+    font-size: 18px;
+    margin: 0;
+  }
+  
+  .profile-card {
+    margin: 10px auto;
+    padding: 15px 20px;
+    max-width: 700px;
+    display: flex;
+    flex-direction: row;
+    gap: 20px;
+    align-items: flex-start;
+  }
+  
+  .avatar-section {
+    flex: 1;
+    margin-bottom: 0;
+    text-align: center;
+    border-right: 1px solid rgba(255, 255, 255, 0.1);
+    padding-right: 20px;
+  }
+  
+  .avatar-placeholder {
+    width: 60px;
+    height: 60px;
+    font-size: 30px;
+    margin: 0 auto 10px;
+  }
+  
+  .username {
+    font-size: 18px;
+  }
+  
+  .stats-section {
+    flex: 1.5;
+    margin-bottom: 0;
+    flex-direction: row;
+    gap: 10px;
+    justify-content: space-around;
+  }
+  
+  .stat-item {
+    margin: 5px;
+  }
+  
+  .stat-value {
+    font-size: 18px;
+    margin-bottom: 2px;
+  }
+  
+  .stat-label {
+    font-size: 12px;
+  }
+  
+  .edit-section {
+    flex: 1.5;
+    border-top: none;
+    padding-top: 0;
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+    padding-left: 20px;
+  }
+  
+  .section-title {
+    font-size: 16px;
+    margin-bottom: 10px;
+    text-align: left;
+  }
+  
+  .edit-form {
+    gap: 10px;
+  }
+  
+  .form-label {
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+  
+  .form-input {
+    padding: 8px;
+    font-size: 14px;
+  }
+  
+  .save-button {
+    padding: 10px;
+    font-size: 14px;
+  }
+}
 </style>

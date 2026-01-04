@@ -4,7 +4,7 @@
     <!-- 顶部导航栏 -->
     <nav class="navbar glass-effect">
       <div class="nav-left">
-        <h1 class="logo">炸金花</h1>
+        <img src="@/assets/logo.png" alt="PokerVerse" class="logo-img" />
       </div>
       <div class="nav-right">
         <div class="user-info">
@@ -20,7 +20,7 @@
     <!-- 主要内容区域 -->
     <div class="main-content">
       <div class="welcome-section">
-        <h2 class="welcome-title">欢迎来到炸金花</h2>
+        <h2 class="welcome-title">Welcome to PokerVerse</h2>
         <p class="welcome-subtitle">与朋友一起享受刺激的纸牌游戏</p>
       </div>
 
@@ -115,13 +115,10 @@ export default {
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
-.logo {
-  font-size: 24px;
-  font-weight: 700;
-  background: linear-gradient(135deg, #6c5ce7, #00d2d3);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
+.logo-img {
+  height: 40px;
+  width: auto;
+  object-fit: contain;
 }
 
 .nav-right {
@@ -289,6 +286,73 @@ export default {
   .stat-card {
     width: 100%;
     max-width: 300px;
+  }
+}
+
+/* 移动端横屏适配 */
+@media screen and (orientation: landscape) and (max-height: 600px) {
+  .main-content {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .welcome-section {
+    margin-bottom: 20px;
+  }
+
+  .welcome-title {
+    font-size: 24px;
+    margin-bottom: 5px;
+  }
+
+  .welcome-subtitle {
+    font-size: 14px;
+    margin-bottom: 10px;
+  }
+
+  .action-buttons {
+    flex-direction: row; /* 强制横向 */
+    gap: 15px;
+    margin-bottom: 20px;
+    width: 100%;
+    justify-content: center;
+  }
+
+  .action-button {
+    padding: 15px;
+    width: 100%;
+    max-width: 200px; /* 限制最大宽度 */
+    flex: 1;
+  }
+
+  .button-icon {
+    font-size: 28px;
+    margin-bottom: 8px;
+  }
+
+  .button-text {
+    font-size: 16px;
+  }
+
+  .quick-stats {
+    flex-direction: row; /* 强制横向 */
+    width: 100%;
+    gap: 10px;
+  }
+
+  .stat-card {
+    padding: 10px;
+    min-width: 80px;
+  }
+
+  .stat-value {
+    font-size: 20px;
+  }
+
+  .stat-label {
+    font-size: 12px;
   }
 }
 </style>

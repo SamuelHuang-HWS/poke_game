@@ -13,12 +13,25 @@
       </div>
       <div class="nav-right">
         <div class="room-info">
-          <span class="room-id">房间号: {{ room?.roomId }}</span>
+          <span 
+            class="room-id clickable" 
+            @click="copyRoomId" 
+            title="点击复制房间号"
+          >
+            房间号: {{ room?.roomId }} 📋
+          </span>
         </div>
       </div>
     </nav>
+    
+    <!-- 游戏恢复加载中 -->
+    <div v-if="isRestoring" class="restoring-overlay glass-effect">
+      <div class="loading-spinner"></div>
+      <div class="loading-text">正在恢复游戏...</div>
+    </div>
+
     <!-- 房间信息区域 -->
-    <div class="room-info-section glass-effect" v-if="!gameStarted">
+    <div class="room-info-section glass-effect" v-if="!gameStarted && !settlementInProgress && !isRestoring">
       <div class="room-details">
         <div class="detail-item">
           <span class="label">入场金币:</span>
@@ -40,7 +53,7 @@
     </div>
     
     <!-- 玩家列表 -->
-    <div class="players-section glass-effect" v-if="!gameStarted">
+    <div class="players-section glass-effect" v-if="!gameStarted && !settlementInProgress && !isRestoring">
       <h2 class="section-title">房间玩家 ({{ room?.players?.length || 0 }}/5)</h2>
       <div class="players-grid">
         <div 
@@ -76,7 +89,7 @@
     </div>
     
     <!-- 准备区域 -->
-    <div class="ready-section" v-if="!gameStarted">
+    <div class="ready-section" v-if="!gameStarted && !settlementInProgress && !isRestoring">
       <button 
         @click="toggleReady" 
         class="ready-button"
@@ -101,9 +114,11 @@
         :game="currentGame"
         :room="room"
         class="game-board-section"
+        @view-hand="openBigCards"
       />
       <BetControls
         v-if="isCurrentPlayer && currentGame && authStore?.user?.id"
+        v-model="showCardsExpanded"
         :min-bet="minBet"
         :player-gold="currentPlayerGold"
         :active-players="activePlayers"
@@ -118,19 +133,37 @@
         :user-id="authStore?.user?.id"
         :has-seen-cards="currentPlayer?.hasSeenCards"
         :betting-round="currentGame?.bettingRound || 1"
+        :cards="currentPlayer?.cards"
         class="bet-controls-section"
       />
     </div>
     
-
+    <!-- 结算模态框 -->
+    <SettlementModal
+      v-model="settlementModalVisible"
+      :winner="settlementData.winner"
+      :players-results="settlementData.playersResults"
+      :is-final-settlement="settlementData.isFinalSettlement"
+      :current-round="settlementData.currentRound"
+      :total-rounds="settlementData.totalRounds"
+      :confirmations="settlementData.confirmations"
+      :players="settlementData.players"
+      :round-players="settlementData.roundPlayers"
+      :settlement-deadline="settlementData.settlementDeadline"
+      @continue="handleSettlementContinue"
+      @exit="handleSettlementExit"
+    />
   </div>
 </template>
 
 <script>
-import { ref, onMounted, onUnmounted, computed, triggerRef } from 'vue';
+import { ref, onMounted, onUnmounted, computed, triggerRef, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import { useToast } from '@/composables/useToast';
 import GameBoard from '@/components/GameBoard.vue';
 import BetControls from '@/components/BetControls.vue';
+import SettlementModal from '@/components/SettlementModal.vue';
+import Card from '@/components/Card.vue';
 import socket from '@/utils/socket';
 import { useRoomStore } from '@/stores/room';
 import { useGameStore } from '@/stores/game';
@@ -140,7 +173,9 @@ export default {
   name: 'GameRoom',
   components: {
     GameBoard,
-    BetControls
+    BetControls,
+    SettlementModal,
+    Card
   },
   setup() {
     const route = useRoute();
@@ -148,6 +183,7 @@ export default {
     const roomStore = useRoomStore();
     const gameStore = useGameStore();
     const authStore = useAuthStore();
+    const toast = useToast();
     
     // 状态
     const room = ref(null);
@@ -155,6 +191,20 @@ export default {
     const isReady = ref(false);
     const gameStarted = ref(false);
     const leavingRoom = ref(false);
+    const settlementModalVisible = ref(false);
+    const settlementInProgress = ref(false);
+    const currentGameId = ref(null);
+    const settlementData = ref({
+      winner: null,
+      playersResults: [],
+      isFinalSettlement: false,
+      currentRound: 0,
+      totalRounds: 0,
+      confirmations: null,
+      players: []
+    });
+    const showCardsExpanded = ref(true);  // 默认展开
+    const isRestoring = ref(false); // 是否主要恢复游戏状态
     
     // 计算属性
     const minBet = computed(() => {
@@ -337,6 +387,21 @@ export default {
       return isCreator;
     });
     
+    // 监听当前玩家是否已看牌，自动展开大牌
+    watch(() => currentPlayer.value?.hasSeenCards, (newVal) => {
+      if (newVal) {
+        //稍微延迟一点，确保动画或数据已到位
+        setTimeout(() => {
+          showCardsExpanded.value = true;
+        }, 300);
+      }
+    });
+
+    const openBigCards = () => {
+      console.log('GameRoom: openBigCards triggered, setting showCardsExpanded to true');
+      showCardsExpanded.value = true;
+    };
+    
     // 方法
     const toggleReady = () => {
       if (!room.value) return;
@@ -389,6 +454,40 @@ export default {
       });
     };
     
+    const copyRoomId = async () => {
+      if (!room.value?.roomId) return;
+      
+      const text = room.value.roomId;
+      
+      try {
+        // 优先使用 Clipboard API (需要安全上下文 HTTPS/Localhost)
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(text);
+        } else {
+            // Fallback: 使用 textarea + execCommand
+            const textArea = document.createElement("textarea");
+            textArea.value = text;
+            
+            // 避免滚动到底部
+            textArea.style.position = "fixed";
+            textArea.style.left = "-9999px";
+            textArea.style.top = "0";
+            
+            document.body.appendChild(textArea);
+            textArea.focus();
+            textArea.select();
+            
+            const successful = document.execCommand('copy');
+            document.body.removeChild(textArea);
+            if (!successful) throw new Error('execCommand copy failed');
+        }
+        toast.success('房间号已复制到剪贴板');
+      } catch (err) {
+        console.error('复制失败', err);
+        toast.error(`复制失败: ${err.message || '未知错误'}`);
+      }
+    };
+
     const leaveRoom = async () => {
       if (!room.value || leavingRoom.value) return;
       
@@ -410,10 +509,36 @@ export default {
         router.push('/');
       } catch (error) {
         console.error('退出房间失败:', error.message);
-        alert('退出房间失败: ' + error.message);
+        toast.error('退出房间失败: ' + error.message);
       } finally {
         leavingRoom.value = false;
       }
+    };
+    
+    const handleSettlementContinue = () => {
+      const gameId = currentGameId.value;
+      const userId = authStore.user?.id;
+      
+      console.log('handleSettlementContinue called with gameId:', gameId, 'userId:', userId);
+      
+      if (gameId && userId) {
+        socket.emit('confirm_continue', { gameId, userId });
+      } else {
+        console.error('Missing gameId or userId:', { gameId, userId });
+      }
+    };
+    
+    const handleSettlementExit = () => {
+      settlementInProgress.value = false;
+      settlementModalVisible.value = false;
+      settlementData.value = {
+        winner: null,
+        playersResults: [],
+        isFinalSettlement: false,
+        currentRound: 0,
+        totalRounds: 0
+      };
+      leaveRoom();
     };
     
 
@@ -446,6 +571,8 @@ export default {
       
       socket.on('room_updated', (updatedRoom) => {
         console.log('GameRoom: Received room_updated', updatedRoom);
+        console.log('Room status:', updatedRoom.status, 'gameStarted:', gameStarted.value);
+        
         // 更新房间信息
         room.value = updatedRoom;
         
@@ -460,6 +587,10 @@ export default {
           };
           console.log('GameRoom: Emit get_game_data', data);
           socket.emit('get_game_data', data);
+        } else if (updatedRoom.status === 'waiting' && gameStarted.value) {
+          // 房间状态变为等待，但不立即设置gameStarted为false
+          // 让round_ended或game_ended事件来控制结算弹窗的显示
+          console.log('Room status changed to waiting, waiting for round_ended event');
         }
         
         // 更新准备状态
@@ -478,10 +609,23 @@ export default {
       
       socket.on('player_folded', (data) => {
         console.log('GameRoom: Received player_folded', data);
-        // 玩家弃牌通知
-        if (data.message) {
-          // 可以在这里显示弃牌提示
+        if (data.userId === authStore?.user?.id) {
+          toast.info('您已弃牌');
+        } else {
+          toast.info(`玩家 ${data.nickname || data.userId} 弃牌`);
         }
+      });
+      
+      // 全局错误处理
+      socket.on('error', (error) => {
+        console.error('Socket error:', error);
+        toast.error(error.message || '服务器发生错误');
+      });
+      
+      // 游戏错误处理
+      socket.on('game_error', (data) => {
+        console.error('Game error:', data);
+        toast.error(data.message || '游戏发生错误');
       });
       
       socket.on('player_offline_folded', (data) => {
@@ -496,8 +640,11 @@ export default {
         console.log('GameRoom: Received game_started', gameData);
         console.log('Before assignment:', currentGame.value);
         console.log('Game data ID:', gameData?._id || gameData?.id);
+        console.log('Game data ID:', gameData?._id || gameData?.id);
         gameStarted.value = true;
+        isRestoring.value = false; // 恢复完成
         currentGame.value = gameData;
+        currentGameId.value = gameData?._id || gameData?.id;
         triggerRef(currentGame);
         
         // 更新room中的玩家金币信息，确保座位显示与操作栏一致
@@ -601,23 +748,87 @@ export default {
         // 注意：对话框状态由BetControls组件内部管理，这里不需要处理
       });
       
-      socket.on('game_ended', (result) => {
-        console.log('GameRoom: Received game_ended', result);
+      socket.on('round_ended', (result) => {
+        console.log('GameRoom: Received round_ended', result);
+        settlementInProgress.value = true;
         gameStarted.value = false;
         currentGame.value = null;
         if (gameStore && typeof gameStore.clearCurrentGame === 'function') {
           gameStore.clearCurrentGame();
         }
         
-        // 显示游戏结果
-        if (result && result.winner) {
-          alert(`游戏结束！${result.winner.nickname} 获胜，赢得 ${result.reward || 0} 金币`);
+        settlementData.value = {
+          winner: result.winner,
+          playersResults: [],
+          isFinalSettlement: false,
+          currentRound: result.currentRound,
+          totalRounds: result.totalRounds,
+          confirmations: result.confirmations || {},
+          players: result.players || [],
+          roundPlayers: result.roundPlayers || []
+        };
+        settlementModalVisible.value = true;
+      });
+      
+      socket.on('game_ended', (result) => {
+        console.log('GameRoom: Received game_ended', result);
+        settlementInProgress.value = true;
+        gameStarted.value = false;
+        currentGame.value = null;
+        if (gameStore && typeof gameStore.clearCurrentGame === 'function') {
+          gameStore.clearCurrentGame();
         }
+        
+        // 显示最终结算
+        settlementData.value = {
+          winner: result.winner,
+          playersResults: result.playersResults || [],
+          isFinalSettlement: true,
+          currentRound: result.totalRounds,
+          totalRounds: result.totalRounds,
+          roundPlayers: result.roundPlayers || []
+        };
+        settlementModalVisible.value = true;
       });
       
       socket.on('error', (error) => {
         console.log('GameRoom: Received error', error);
         alert(error.message || '发生未知错误');
+      });
+      
+      socket.on('player_confirmed', (data) => {
+        console.log('GameRoom: Received player_confirmed', data);
+        const confirmedCount = Object.values(data.confirmations).filter(Boolean).length;
+        const totalCount = Object.keys(data.confirmations).length;
+        console.log(`玩家确认进度: ${confirmedCount}/${totalCount}`);
+        
+        if (settlementData.value) {
+          settlementData.value.confirmations = data.confirmations;
+        }
+      });
+      
+      socket.on('next_round_started', (gameData) => {
+        console.log('GameRoom: Received next_round_started', gameData);
+        try {
+          settlementInProgress.value = false;
+          settlementModalVisible.value = false;
+          settlementData.value = {
+            winner: null,
+            playersResults: [],
+            isFinalSettlement: false,
+            currentRound: 0,
+            totalRounds: 0
+          };
+          currentGame.value = gameData;
+          currentGameId.value = gameData?._id || gameData?.id;
+          gameStarted.value = true;
+        } catch (error) {
+          console.error('处理 next_round_started 事件时出错:', error);
+          // 即使有错误，也要确保弹窗被关闭
+          settlementInProgress.value = false;
+          settlementModalVisible.value = false;
+          gameStarted.value = true;
+        }
       });
       
       // 监听房间解散事件
@@ -680,6 +891,7 @@ export default {
         // 获取房间详情
         const roomId = route.params.roomId;
         const roomDetail = await roomStore.fetchRoomDetail(roomId);
+        console.log('Fetched room detail:', roomDetail);
         room.value = roomDetail;
         
         // 检查用户是否已经在房间内
@@ -703,6 +915,7 @@ export default {
         
         // 等待Socket连接建立
         await waitForSocketConnection();
+        console.log('Socket connected, verifying game state...');
         
         // 设置当前房间信息，用于重连时自动重新加入
         socket.setCurrentRoom(roomId, authStore?.user?.id);
@@ -712,6 +925,21 @@ export default {
           userId: authStore?.user?.id,
           roomId: roomId
         });
+
+        // 如果房间状态是playing，且当前没在游戏中，尝试恢复游戏状态
+        // 强制检查：只要房间是playing，就去拉取游戏数据
+        if (roomDetail.status === 'playing') {
+          console.log('Room is playing, attempting to restore game state via get_game_data...');
+          isRestoring.value = true; // 标记正在恢复，避免显示大厅
+          console.log('Request payload:', { roomId, userId: authStore?.user?.id });
+          socket.emit('get_game_data', {
+            roomId: roomId,
+            userId: authStore?.user?.id
+          });
+        } else {
+             console.log('Room is not playing. Status:', roomDetail.status);
+             isRestoring.value = false;
+        }
       } catch (error) {
         console.error('加入房间失败:', error);
         
@@ -731,13 +959,13 @@ export default {
       // 清理Socket监听器
       removeSocketListeners();
       
-      // 离开房间
-      if (room.value) {
-        socket.emit('leave_room', {
-          roomId: room.value.roomId,
-          userId: authStore?.user?.id
-        });
-      }
+      // 离开房间 -注释掉，防止刷新页面时触发离开房间导致游戏状态丢失
+      // if (room.value) {
+      //   socket.emit('leave_room', {
+      //     roomId: room.value.roomId,
+      //     userId: authStore?.user?.id
+      //   });
+      // }
       
       // 清除Socket中的房间信息
       socket.clearCurrentRoom();
@@ -769,8 +997,16 @@ export default {
       toggleReady,
       startGame,
       leaveRoom,
+      copyRoomId,
       isPlayerTurn,
-      authStore
+      authStore,
+      settlementModalVisible,
+      settlementInProgress,
+      settlementData,
+      handleSettlementContinue,
+      handleSettlementExit,
+      showCardsExpanded,
+      openBigCards
     };
   }
 };
@@ -816,9 +1052,30 @@ export default {
   margin: 0;
 }
 
+.room-info {
+  display: flex;
+  align-items: center;
+}
+
 .room-id {
-  font-size: 14px;
-  color: #b2b2b2;
+  font-size: 16px;
+  color: #f0f0f0;
+}
+
+.room-id.clickable {
+  cursor: pointer;
+  transition: all 0.2s ease;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.room-id.clickable:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #00d2d3;
+}
+
+.room-id.clickable:active {
+  transform: scale(0.95);
 }
 
 .room-info-section {
@@ -1147,5 +1404,156 @@ export default {
   background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(10px);
   border: 1px solid rgba(255, 255, 255, 0.2);
+}
+/* 移动端横屏适配 */
+@media screen and (orientation: landscape) and (max-height: 600px) {
+  .game-room-container {
+    padding: 8px;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  .navbar {
+    padding: 4px 10px;
+    margin-bottom: 4px;
+    min-height: 40px;
+  }
+
+  .title {
+    font-size: 16px;
+  }
+
+  .back-button {
+    padding: 4px 10px;
+    font-size: 14px;
+  }
+
+  .game-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0; /* 允许 flex 子项收缩 */
+    gap: 4px;
+  }
+
+  :deep(.game-board) {
+    flex: 1;
+    min-height: 0;
+    /* 确保棋盘内容缩放 */
+    transform-origin: center top;
+  }
+
+  /* 调整 BetControls 的空间 */
+  :deep(.bet-controls) {
+    padding: 5px 10px;
+    margin-top: auto; /* 推到底部 */
+  }
+
+/* 恢复游戏加载遮罩 */
+.restoring-overlay {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 40px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  z-index: 999;
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 4px solid rgba(255, 255, 255, 0.1);
+  border-left-color: #ffd700;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 20px;
+}
+
+.loading-text {
+  color: #fff;
+  font-size: 18px;
+  font-weight: 500;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+  
+  /* 待开始状态的布局优化 */
+  .room-info-section {
+    display: flex;
+    padding: 5px 10px;
+    margin-bottom: 5px;
+    align-items: center;
+  }
+
+  .room-details {
+    width: 100%;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .detail-item {
+    flex-direction: row;
+    gap: 5px;
+    margin-bottom: 0;
+  }
+
+  .label, .value {
+    font-size: 12px;
+    margin-bottom: 0;
+  }
+
+  .section-title {
+    font-size: 14px;
+    margin-bottom: 5px;
+  }
+
+  .players-section {
+    display: block;   /* 恢复显示 */
+    flex: 1;          /* 占据剩余空间 */
+    overflow-y: auto; /* 允许滚动 */
+    padding: 5px 10px;
+    margin-bottom: 5px;
+    min-height: 0;
+  }
+   
+  .players-grid {
+    grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));
+    gap: 8px;
+  }
+
+  .player-card {
+    padding: 8px;
+  }
+  
+  .player-avatar {
+    width: 32px;
+    height: 32px;
+    font-size: 16px;
+  }
+  
+  .player-name {
+    font-size: 12px;
+  }
+
+  /* 准备按钮区域 */
+  .ready-section {
+    padding: 5px;
+    margin-top: 0;
+  }
+
+  .ready-button, .start-button {
+    padding: 8px 20px;
+    font-size: 14px;
+  }
 }
 </style>

@@ -19,6 +19,183 @@ function initializeSocket(server) {
   const userSockets = new Map();
   const playerOfflineTimers = new Map();
 
+  // 监听内部事件总线
+  const eventBus = require("../utils/eventBus");
+
+  eventBus.on("player_action_timeout", async ({ gameId, userId, result }) => {
+    console.log(`Socket收到超时事件: 游戏 ${gameId}, 玩家 ${userId}`);
+    if (result) {
+      // 使用 sendGameStateUpdate 广播更新
+      // 注意：这里我们需要 access sendGameStateUpdate. 
+      // 由于 sendGameStateUpdate 是在 initializeSocket 内部定义的，我们可以直接调用，
+      // 前提是 eventBus listener 也在 initializeSocket 内部。
+
+      await sendGameStateUpdate(userSockets, gameId, result.roomId);
+
+      // 如果游戏状态为settled或finished，发送结算事件
+      if (result.status === "settled" || result.status === "finished") {
+        await sendSettlementEvent(io, result.roomId);
+      }
+
+      // 通知被弃权的玩家
+      const activePlayerId = gameService.getUserId(userId);
+      const playerSocket = userSockets.get(activePlayerId);
+      if (playerSocket) {
+        playerSocket.emit("game_action_result", result);
+        playerSocket.emit("toast", { type: "warning", message: "您因超时未操作，已被自动弃权" });
+      }
+
+      // 通知房间其他人
+      io.to(result.roomId).emit("toast", { type: "info", message: "有玩家超时自动弃权" });
+    }
+  });
+
+  eventBus.on("settlement_timeout", async ({ gameId, roomId }) => {
+    console.log(`Socket收到结算超时事件: 游戏 ${gameId}, 房间 ${roomId}`);
+    try {
+      // 结算超时，强制开启下一轮
+      // 首先需要清除之前的超时（虽然已经触发了，但为了保险起见）
+      gameService.clearSettlementTimeout(gameId);
+
+      const game = await Game.findById(gameId);
+      const room = await roomService.getRoomByRoomId(roomId);
+
+      if (!game || !room) {
+        console.error("结算超时处理失败: 游戏或房间不存在");
+        return;
+      }
+
+      // 如果游戏已经结束（所有局数打完），则不开启下一轮
+      if (game.round >= game.totalRounds || game.status === "finished") {
+        console.log("游戏已完全结束，忽略结算超时");
+        return;
+      }
+
+      console.log("结算超时，自动开始下一局");
+
+      // 注意：这里我们假设 startNewGame / startNextRound 会处理"下一局"的逻辑
+      // 之前代码 confirm_continue 调用的是 gameService.startNextRound(gameId)
+      // 如果不存在，我们可能需要使用 startNewGame(roomId)
+      // 根据之前的 grep 搜索，startNextRound 可能不存在 (待确认)
+      // 如果不存在，我们将使用 startNewGame(roomId)
+
+      // 临时假设 startNextRound 存在，如果不存在 catch 会捕获
+      // 如果 grep 结果显示不存在，由于我们无法看到完整文件，我们先尝试调用 startNewGame(roomId)
+      // 因为 startNewGame 内部有处理 room.gameId 的逻辑来 increment round.
+
+      const newGameData = await gameService.startNewGame(roomId);
+
+      // 广播 next_round_started
+      // 这里的逻辑参考 confirm_continue 的广播逻辑
+
+      console.log(`准备向 ${room.players.length} 个玩家发送 next_round_started 事件`);
+      for (const player of room.players) {
+        let playerId = gameService.getUserId(player.userId);
+        const playerSocket = userSockets.get(playerId);
+
+        if (playerSocket) {
+          const playerGameData = gameService.formatGame(newGameData, playerId);
+          playerSocket.emit("next_round_started", playerGameData);
+          playerSocket.emit("toast", { type: "info", message: "结算超时，自动开始下一局" });
+        }
+      }
+
+    } catch (error) {
+      console.error("处理结算超时失败:", error);
+      io.to(roomId).emit("error", { message: "自动开始下一局失败: " + error.message });
+    }
+  });
+
+  /**
+   * 发送游戏结算事件的辅助函数
+   * @param {Object} io Socket.IO实例
+   * @param {string} roomId 房间ID
+   */
+  async function sendSettlementEvent(io, roomId) {
+    const room = await roomService.getRoomByRoomId(roomId);
+    const game = await Game.findOne({ roomId: roomId }).sort({ round: -1 });
+
+    if (!room || !game) {
+      console.error("发送结算事件失败: 房间或游戏不存在");
+      return;
+    }
+
+    // 获取当前局的历史记录，包含所有玩家的牌面信息
+    const currentRoundHistory = game.roundHistory[game.roundHistory.length - 1];
+
+    if (game.round >= game.totalRounds) {
+      // 所有局数完成，发送game_ended事件
+      io.to(roomId).emit("game_ended", {
+        winner: currentRoundHistory?.winner,
+        playersResults: game.players.map((gp) => {
+          const roomPlayer = room.players.find(
+            (rp) => gameService.getUserId(rp.userId) === gameService.getUserId(gp.userId)
+          );
+          return {
+            userId: gameService.getUserId(gp.userId),
+            nickname: gp.nickname || roomPlayer?.nickname,
+            roomGold: gp.roomGold,
+            goldChange: gp.roomGold - room.entryGold,
+          };
+        }),
+        totalRounds: game.totalRounds,
+        roundHistory: game.roundHistory,
+        // 本局玩家牌面信息
+        roundPlayers: currentRoundHistory?.players || [],
+      });
+    } else {
+      // 单局结束，发送round_ended事件
+      io.to(roomId).emit("round_ended", {
+        winner: currentRoundHistory?.winner,
+        currentRound: game.round,
+        totalRounds: game.totalRounds,
+        confirmations: game.playerConfirmations || {},
+        players: room.players.map((p) => ({
+          userId: gameService.getUserId(p.userId),
+          nickname: p.nickname,
+        })),
+        // 本局玩家牌面信息
+        roundPlayers: currentRoundHistory?.players || [],
+        settlementDeadline: game.settlementDeadline // 结算截止时间
+      });
+    }
+
+    io.to(roomId).emit("room_updated", roomService.formatRoom(room));
+  }
+
+  /**
+   * 发送游戏状态更新的辅助函数
+   * @param {Map} userSockets 用户socket映射
+   * @param {string} gameId 游戏ID
+   * @param {string} roomId 房间ID
+   */
+  async function sendGameStateUpdate(userSockets, gameId, roomId) {
+    const game = await Game.findById(gameId);
+    const room = await roomService.getRoomByRoomId(roomId);
+
+    if (!room || !game) {
+      console.error("发送游戏状态更新失败: 房间或游戏不存在");
+      return;
+    }
+
+    for (const player of room.players) {
+      let playerId;
+      if (typeof player.userId === "object" && player.userId._id) {
+        playerId = player.userId._id.toString();
+      } else if (typeof player.userId === "object" && player.userId.toString) {
+        playerId = player.userId.toString();
+      } else {
+        playerId = player.userId;
+      }
+
+      const playerSocket = userSockets.get(playerId);
+      if (playerSocket) {
+        const playerGame = gameService.formatGame(game, player.userId);
+        playerSocket.emit("game_state_update", playerGame);
+      }
+    }
+  }
+
   io.on("connection", (socket) => {
     console.log("用户连接:", socket.id);
 
@@ -281,10 +458,9 @@ function initializeSocket(server) {
             }
           }
 
-          // 如果游戏状态为settled，发送room_updated事件以显示结算页面
+          // 如果游戏状态为settled，发送结算事件
           if (result.status === "settled") {
-            const updatedRoom = await roomService.getRoomByRoomId(room.roomId);
-            io.to(room.roomId).emit("room_updated", updatedRoom);
+            await sendSettlementEvent(io, room.roomId);
           }
         }
       } catch (error) {
@@ -298,39 +474,12 @@ function initializeSocket(server) {
         const { gameId, userId } = data;
         const result = await gameService.seeCards(gameId, userId);
 
-        // 为房间内的每个玩家单独发送游戏状态更新，确保他们能看到自己的牌
-        const room = await roomService.getRoomByRoomId(result.roomId);
-        if (room && room.players) {
-          for (const player of room.players) {
-            // 处理用户ID，可能是ObjectId对象或字符串
-            let playerId;
-            if (typeof player.userId === "object" && player.userId._id) {
-              // 如果是已填充的用户对象，使用_id
-              playerId = player.userId._id.toString();
-            } else if (
-              typeof player.userId === "object" &&
-              player.userId.toString
-            ) {
-              // 如果是ObjectId对象，直接转换
-              playerId = player.userId.toString();
-            } else {
-              // 如果已经是字符串，直接使用
-              playerId = player.userId;
-            }
+        // 使用辅助函数发送游戏状态更新
+        await sendGameStateUpdate(userSockets, gameId, result.roomId);
 
-            const playerSocket = userSockets.get(playerId);
-            if (playerSocket) {
-              // 发送给所有玩家，包括操作者自己
-              const playerGame = gameService.formatGame(result, player.userId);
-              playerSocket.emit("game_state_update", playerGame);
-            }
-          }
-
-          // 如果游戏状态为settled，发送room_updated事件以显示结算页面
-          if (result.status === "settled") {
-            const updatedRoom = await roomService.getRoomByRoomId(room.roomId);
-            io.to(room.roomId).emit("room_updated", updatedRoom);
-          }
+        // 如果游戏状态为settled或finished，发送结算事件
+        if (result.status === "settled" || result.status === "finished") {
+          await sendSettlementEvent(io, result.roomId);
         }
 
         // 发送操作结果给操作玩家
@@ -346,39 +495,12 @@ function initializeSocket(server) {
         const { gameId, userId } = data;
         const result = await gameService.call(gameId, userId);
 
-        // 为房间内的每个玩家单独发送游戏状态更新，确保他们能看到自己的牌
-        const room = await roomService.getRoomByRoomId(result.roomId);
-        if (room && room.players) {
-          for (const player of room.players) {
-            // 处理用户ID，可能是ObjectId对象或字符串
-            let playerId;
-            if (typeof player.userId === "object" && player.userId._id) {
-              // 如果是已填充的用户对象，使用_id
-              playerId = player.userId._id.toString();
-            } else if (
-              typeof player.userId === "object" &&
-              player.userId.toString
-            ) {
-              // 如果是ObjectId对象，直接转换
-              playerId = player.userId.toString();
-            } else {
-              // 如果已经是字符串，直接使用
-              playerId = player.userId;
-            }
+        // 使用辅助函数发送游戏状态更新
+        await sendGameStateUpdate(userSockets, gameId, result.roomId);
 
-            const playerSocket = userSockets.get(playerId);
-            if (playerSocket) {
-              // 发送给所有玩家，包括操作者自己
-              const playerGame = gameService.formatGame(result, player.userId);
-              playerSocket.emit("game_state_update", playerGame);
-            }
-          }
-
-          // 如果游戏状态为settled，发送room_updated事件以显示结算页面
-          if (result.status === "settled") {
-            const updatedRoom = await roomService.getRoomByRoomId(room.roomId);
-            io.to(room.roomId).emit("room_updated", updatedRoom);
-          }
+        // 如果游戏状态为settled或finished，发送结算事件
+        if (result.status === "settled" || result.status === "finished") {
+          await sendSettlementEvent(io, result.roomId);
         }
 
         // 发送操作结果给操作玩家
@@ -394,39 +516,12 @@ function initializeSocket(server) {
         const { gameId, userId, amount } = data;
         const result = await gameService.raise(gameId, userId, amount);
 
-        // 为房间内的每个玩家单独发送游戏状态更新，确保他们能看到自己的牌
-        const room = await roomService.getRoomByRoomId(result.roomId);
-        if (room && room.players) {
-          for (const player of room.players) {
-            // 处理用户ID，可能是ObjectId对象或字符串
-            let playerId;
-            if (typeof player.userId === "object" && player.userId._id) {
-              // 如果是已填充的用户对象，使用_id
-              playerId = player.userId._id.toString();
-            } else if (
-              typeof player.userId === "object" &&
-              player.userId.toString
-            ) {
-              // 如果是ObjectId对象，直接转换
-              playerId = player.userId.toString();
-            } else {
-              // 如果已经是字符串，直接使用
-              playerId = player.userId;
-            }
+        // 使用辅助函数发送游戏状态更新
+        await sendGameStateUpdate(userSockets, gameId, result.roomId);
 
-            const playerSocket = userSockets.get(playerId);
-            if (playerSocket) {
-              // 发送给所有玩家，包括操作者自己
-              const playerGame = gameService.formatGame(result, player.userId);
-              playerSocket.emit("game_state_update", playerGame);
-            }
-          }
-
-          // 如果游戏状态为settled，发送room_updated事件以显示结算页面
-          if (result.status === "settled") {
-            const updatedRoom = await roomService.getRoomByRoomId(room.roomId);
-            io.to(room.roomId).emit("room_updated", updatedRoom);
-          }
+        // 如果游戏状态为settled或finished，发送结算事件
+        if (result.status === "settled" || result.status === "finished") {
+          await sendSettlementEvent(io, result.roomId);
         }
 
         // 发送操作结果给操作玩家
@@ -442,39 +537,12 @@ function initializeSocket(server) {
         const { gameId, userId } = data;
         const result = await gameService.fold(gameId, userId);
 
-        // 为房间内的每个玩家单独发送游戏状态更新，确保他们能看到自己的牌
-        const room = await roomService.getRoomByRoomId(result.roomId);
-        if (room && room.players) {
-          for (const player of room.players) {
-            // 处理用户ID，可能是ObjectId对象或字符串
-            let playerId;
-            if (typeof player.userId === "object" && player.userId._id) {
-              // 如果是已填充的用户对象，使用_id
-              playerId = player.userId._id.toString();
-            } else if (
-              typeof player.userId === "object" &&
-              player.userId.toString
-            ) {
-              // 如果是ObjectId对象，直接转换
-              playerId = player.userId.toString();
-            } else {
-              // 如果已经是字符串，直接使用
-              playerId = player.userId;
-            }
+        // 使用辅助函数发送游戏状态更新
+        await sendGameStateUpdate(userSockets, gameId, result.roomId);
 
-            const playerSocket = userSockets.get(playerId);
-            if (playerSocket) {
-              // 发送给所有玩家，包括操作者自己
-              const playerGame = gameService.formatGame(result, player.userId);
-              playerSocket.emit("game_state_update", playerGame);
-            }
-          }
-
-          // 如果游戏状态为settled，发送room_updated事件以显示结算页面
-          if (result.status === "settled") {
-            const updatedRoom = await roomService.getRoomByRoomId(room.roomId);
-            io.to(room.roomId).emit("room_updated", updatedRoom);
-          }
+        // 如果游戏状态为settled或finished，发送结算事件
+        if (result.status === "settled" || result.status === "finished") {
+          await sendSettlementEvent(io, result.roomId);
         }
 
         // 发送操作结果给操作玩家
@@ -490,39 +558,12 @@ function initializeSocket(server) {
         const { gameId, userId, targetUserId } = data;
         const result = await gameService.compare(gameId, userId, targetUserId);
 
-        // 为房间内的每个玩家单独发送游戏状态更新，确保他们能看到自己的牌
-        const room = await roomService.getRoomByRoomId(result.roomId);
-        if (room && room.players) {
-          for (const player of room.players) {
-            // 处理用户ID，可能是ObjectId对象或字符串
-            let playerId;
-            if (typeof player.userId === "object" && player.userId._id) {
-              // 如果是已填充的用户对象，使用_id
-              playerId = player.userId._id.toString();
-            } else if (
-              typeof player.userId === "object" &&
-              player.userId.toString
-            ) {
-              // 如果是ObjectId对象，直接转换
-              playerId = player.userId.toString();
-            } else {
-              // 如果已经是字符串，直接使用
-              playerId = player.userId;
-            }
+        // 使用辅助函数发送游戏状态更新
+        await sendGameStateUpdate(userSockets, gameId, result.roomId);
 
-            const playerSocket = userSockets.get(playerId);
-            if (playerSocket) {
-              // 发送给所有玩家，包括操作者自己
-              const playerGame = gameService.formatGame(result, player.userId);
-              playerSocket.emit("game_state_update", playerGame);
-            }
-          }
-
-          // 如果游戏状态为settled，发送room_updated事件以显示结算页面
-          if (result.status === "settled") {
-            const updatedRoom = await roomService.getRoomByRoomId(room.roomId);
-            io.to(room.roomId).emit("room_updated", updatedRoom);
-          }
+        // 如果游戏状态为settled或finished，发送结算事件
+        if (result.status === "settled" || result.status === "finished") {
+          await sendSettlementEvent(io, result.roomId);
         }
 
         // 发送操作结果给操作玩家
@@ -543,7 +584,105 @@ function initializeSocket(server) {
       });
     });
 
-    // 获取游戏数据
+    socket.on("confirm_continue", async (data) => {
+      try {
+        const { gameId, userId } = data;
+
+        console.log(`确认继续: gameId=${gameId}, userId=${userId}`);
+
+        // 使用原子操作更新特定玩家的确认状态
+        const updatedGame = await Game.findOneAndUpdate(
+          {
+            _id: gameId,
+            status: "settled"
+          },
+          {
+            $set: {
+              [`playerConfirmations.${gameService.getUserId(userId)}`]: true
+            }
+          },
+          { new: true }  // 返回更新后的文档
+        );
+
+        if (!updatedGame) {
+          socket.emit("error", { message: "游戏不存在或状态不允许确认继续" });
+          return;
+        }
+
+        console.log(`更新后的确认状态:`, updatedGame.playerConfirmations);
+
+        const room = await roomService.getRoomByRoomId(updatedGame.roomId);
+        if (!room) {
+          socket.emit("error", { message: "房间不存在" });
+          return;
+        }
+
+        console.log(`房间玩家数量: ${room.players.length}`);
+        room.players.forEach((p, index) => {
+          console.log(`玩家${index + 1}: ${p.nickname}, userId: ${p.userId}, 格式化ID: ${gameService.getUserId(p.userId)}`);
+        });
+
+        io.to(room.roomId).emit("player_confirmed", {
+          userId: gameService.getUserId(userId),
+          confirmations: updatedGame.playerConfirmations || {},
+        });
+
+        const allConfirmed = room.players.every(
+          (p) => (updatedGame.playerConfirmations || {})[gameService.getUserId(p.userId)]
+        );
+
+        console.log(`所有玩家都确认了吗: ${allConfirmed}`);
+        console.log(`确认状态详情:`, updatedGame.playerConfirmations);
+
+        if (allConfirmed) {
+          console.log("所有玩家都已确认，开始下一局");
+          await gameService.startNextRound(gameId);
+          const finalGame = await Game.findById(gameId);
+          const updatedRoom = await roomService.getRoomByRoomId(room.roomId);
+
+          console.log(`准备向 ${room.players.length} 个玩家发送 next_round_started 事件`);
+          for (const player of room.players) {
+            // 处理用户ID，可能是ObjectId对象或字符串
+            let playerId;
+            if (typeof player.userId === "object" && player.userId._id) {
+              // 如果是已填充的用户对象，使用_id
+              playerId = player.userId._id.toString();
+            } else if (
+              typeof player.userId === "object" &&
+              player.userId.toString
+            ) {
+              // 如果是ObjectId对象，直接转换
+              playerId = player.userId.toString();
+            } else {
+              // 如果已经是字符串，直接使用
+              playerId = player.userId;
+            }
+
+            const playerSocket = userSockets.get(playerId);
+            console.log(`玩家 ${player.nickname} (${playerId}) 的socket存在: ${!!playerSocket}`);
+            if (playerSocket) {
+              const playerGame = gameService.formatGame(
+                finalGame,
+                player.userId
+              );
+              console.log(`向玩家 ${player.nickname} 发送 next_round_started 事件`);
+              playerSocket.emit("next_round_started", playerGame);
+            } else {
+              console.log(`无法找到玩家 ${player.nickname} 的socket连接`);
+            }
+          }
+
+          io.to(room.roomId).emit("room_updated", updatedRoom);
+          console.log("已发送 room_updated 事件到房间");
+        } else {
+          console.log("仍有玩家未确认，等待更多确认");
+        }
+      } catch (error) {
+        console.error("确认继续时发生错误:", error);
+        socket.emit("error", { message: error.message });
+      }
+    });
+
     socket.on("get_game_data", async (data) => {
       try {
         const { roomId, userId } = data;

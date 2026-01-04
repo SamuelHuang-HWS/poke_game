@@ -1,69 +1,83 @@
 // client/src/components/BetControls.vue
 <template>
   <div class="bet-controls">
-    <div class="bet-info">
-      <!-- <span class="bet-info-item">
-        <span class="bet-label">当前</span>
-        <span class="bet-value">💰{{ currentBet }}</span>
-      </span> -->
-      <span class="bet-info-item">
-        <span class="bet-label">最小</span>
-        <span class="bet-value">💰{{ minRaiseAmount }}</span>
-      </span>
-      <span class="bet-info-item">
-        <span class="bet-label">金币</span>
-        <span class="bet-value">💰{{ playerGold }}</span>
-      </span>
+    <!-- Hand Cards View with inline hide button -->
+    <!-- Hand Cards Expanded View (Fullscreen Overlay) -->
+    <Teleport to="body">
+      <div 
+        v-if="hasSeenCards && cards && cards.length > 0 && modelValue" 
+        class="cards-overlay"
+        @click="$emit('update:modelValue', false)"
+      >
+        <div class="cards-centered-container" @click.stop>
+          <div v-for="(card, index) in cards" :key="index" class="expanded-card-wrapper">
+            <Card 
+              :suit="card.suit" 
+              :rank="card.rank" 
+              :is-face-up="true"
+            />
+          </div>
+        </div>
+        <div class="overlay-hint">点击任意区域关闭</div>
+      </div>
+    </Teleport>
+    
+    <!-- Main action row: info left, buttons right -->
+    <div class="action-row">
+      <div class="bet-info">
+        <span class="bet-info-item">
+          <span class="bet-label">最小</span>
+          <span class="bet-value">💰{{ minRaiseAmount }}</span>
+        </span>
+        <span class="bet-info-item">
+          <span class="bet-label">金币</span>
+          <span class="bet-value">💰{{ playerGold }}</span>
+        </span>
+      </div>
+      
+      <div class="bet-actions">
+        <button
+          @click="handleSeeCards"
+          class="action-btn see-btn"
+          :disabled="!canSeeCards || isActionLoading || !isPlayerTurn"
+          title="查看手牌"
+        >👁️</button>
+        
+        <button
+          @click="handleCall"
+          class="action-btn call-btn"
+          :disabled="!canCall || isActionLoading || !isPlayerTurn"
+          title="跟注"
+        >
+          <span class="btn-icon">📞</span>
+          <span class="btn-text">{{ minRaiseAmount }}</span>
+        </button>
+        
+        <button
+          @click="handleRaise"
+          class="action-btn raise-btn"
+          :disabled="!canRaise || isActionLoading || !isPlayerTurn"
+          title="加注"
+        ><span class="btn-icon">⬆️</span></button>
+        
+        <button
+          @click="handleFold"
+          class="action-btn fold-btn"
+          :disabled="!canFold || isActionLoading || !isPlayerTurn"
+          title="弃牌"
+        ><span class="btn-icon">🏳️</span></button>
+        
+        <button
+          @click="handleCompare"
+          class="action-btn compare-btn"
+          :disabled="!canCompare || isActionLoading || !isPlayerTurn || !canCompareByRound"
+          title="比牌"
+        ><span class="btn-icon">⚔️</span></button>
+      </div>
     </div>
     
-    <div class="bet-actions">
-      <button
-        @click="handleSeeCards"
-        class="action-btn see-btn"
-        :disabled="!canSeeCards || isActionLoading || !isPlayerTurn"
-        :title="canSeeCards && !isActionLoading && isPlayerTurn ? '查看您的手牌' : (isActionLoading ? '操作处理中...' : !isPlayerTurn ? '等待其他玩家操作' : '还无法看牌')"
-      >
-        👁️
-      </button>
-      
-      <button
-        @click="handleCall"
-        class="action-btn call-btn"
-        :disabled="!canCall || isActionLoading || !isPlayerTurn"
-        :title="canCall && !isActionLoading && isPlayerTurn ? `跟注 ${minRaiseAmount}` : (isActionLoading ? '操作处理中...' : !isPlayerTurn ? '等待其他玩家操作' : '无法跟注')"
-      >
-        <span class="btn-icon">📞</span>
-        <span class="btn-text">{{ minRaiseAmount }}</span>
-      </button>
-      
-      <button
-        @click="handleRaise"
-        class="action-btn raise-btn"
-        :disabled="!canRaise || isActionLoading || !isPlayerTurn"
-        :title="canRaise && !isActionLoading && isPlayerTurn ? '加注' : (isActionLoading ? '操作处理中...' : !isPlayerTurn ? '等待其他玩家操作' : '无法加注')"
-      >
-        <span class="btn-icon">⬆️</span>
-      </button>
-      
-      <button
-        @click="handleFold"
-        class="action-btn fold-btn"
-        :disabled="!canFold || isActionLoading || !isPlayerTurn"
-        :title="canFold && !isActionLoading && isPlayerTurn ? '弃牌' : (isActionLoading ? '操作处理中...' : !isPlayerTurn ? '等待其他玩家操作' : '无法弃牌')"
-      >
-        <span class="btn-icon">🏳️</span>
-      </button>
-      
-      <button
-        @click="handleCompare"
-        class="action-btn compare-btn"
-        :disabled="!canCompare || isActionLoading || !isPlayerTurn || !canCompareByRound"
-        :title="canCompare && !isActionLoading && isPlayerTurn && canCompareByRound ? '比牌' : (isActionLoading ? '操作处理中...' : !isPlayerTurn ? '等待其他玩家操作' : !canCompareByRound ? '前三轮不能比牌' : '无法比牌')"
-      >
-        <span class="btn-icon">⚔️</span>
-      </button>
-    </div>
-    
+
+
     <Teleport to="body">
       <div v-if="showRaiseDialog" class="dialog-overlay" @click="showRaiseDialog = false">
         <div class="dialog" @click.stop>
@@ -118,11 +132,13 @@
 </template>
 
 <script>
-import { ref, computed, onMounted, onUnmounted } from 'vue';
+import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import socket from '@/utils/socket';
+import Card from '@/components/Card.vue';
 
 export default {
   name: 'BetControls',
+  components: { Card },
   props: {
     minBet: {
       type: Number,
@@ -183,14 +199,25 @@ export default {
     bettingRound: {
       type: Number,
       default: 1
+    },
+    cards: {
+      type: Array,
+      default: () => []
+    },
+    modelValue: {
+      type: Boolean,
+      default: true
     }
   },
+  emits: ['update:modelValue'],
   setup(props) {
     const showRaiseDialog = ref(false);
     const showCompareDialog = ref(false);
     const raiseAmount = ref(0);
     const isActionLoading = ref(false);
     
+
+
     // const callAmount = computed(() => {
     //   if (props.hasSeenCards) {
     //     return props.minBet * 2 - props.currentBet;
@@ -215,6 +242,8 @@ export default {
     const canCompareByRound = computed(() => {
       return props.bettingRound > 3;
     });
+    
+
     
     // 操作函数 - 直接发送socket请求
     const handleSeeCards = async () => {
@@ -336,27 +365,33 @@ export default {
       console.log('BetControls: Loading state reset');
     };
     
+    // 保存监听器引用，以便正确移除
+    const handleGameStateUpdate = (data) => {
+      console.log('BetControls: Received game_state_update', data);
+      resetLoadingState();
+    };
+    
+    const handleGameActionResult = (data) => {
+      console.log('BetControls: Received game_action_result', data);
+      resetLoadingState();
+    };
+    
+    const handleError = (error) => {
+      console.log('BetControls: Received error', error);
+      resetLoadingState();
+    };
+    
     onMounted(() => {
-      socket.on('game_state_update', (data) => {
-        console.log('BetControls: Received game_state_update', data);
-        resetLoadingState();
-      });
-      socket.on('game_action_result', (data) => {
-        console.log('BetControls: Received game_action_result', data);
-        resetLoadingState();
-      });
-      socket.on('error', (error) => {
-        console.log('BetControls: Received error', error);
-        resetLoadingState();
-      });
+      socket.on('game_state_update', handleGameStateUpdate);
+      socket.on('game_action_result', handleGameActionResult);
+      socket.on('error', handleError);
     });
     
-    // 在组件卸载时移除事件监听器
+    // 在组件卸载时移除事件监听器 - 只移除BetControls自己的监听器
     onUnmounted(() => {
-      // 需要传入相同的回调函数来正确移除监听器
-      socket.off('game_state_update');
-      socket.off('game_action_result');
-      socket.off('error');
+      socket.off('game_state_update', handleGameStateUpdate);
+      socket.off('game_action_result', handleGameActionResult);
+      socket.off('error', handleError);
     });
     
     return {
@@ -388,21 +423,89 @@ export default {
   backdrop-filter: blur(12px);
   border: 1px solid rgba(255, 255, 255, 0.1);
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+  position: relative; /* For absolute pos of cards if needed, current flow is flex vertical */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+/* Fullscreen Cards Overlay */
+.cards-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(8px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  animation: fadeIn 0.3s ease;
+}
+
+.cards-centered-container {
+  display: flex;
+  justify-content: center;
+  gap: 20px;
+  padding: 20px;
+}
+
+.expanded-card-wrapper {
+  /* Scale up for "Big" effect. User requested 2x. 
+     Base size is 120px*168px. 2x is HUGE (240px wide). 
+     Previous scale was 0.85. 2x of that is 1.7. 
+     Let's use 1.7 to be consistent with "double the current 0.85 size" */
+  transform: scale(1.7);
+  margin: 30px 40px; /* Increased horizontal margin to 40px to prevent overlap */
+  box-shadow: 0 10px 40px rgba(0,0,0,0.6);
+  transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.expanded-card-wrapper:hover {
+  transform: scale(1.8) translateY(-10px);
+  z-index: 10;
+}
+
+.overlay-hint {
+  color: rgba(255, 255, 255, 0.6);
+  margin-top: 80px;
+  font-size: 14px;
+  pointer-events: none;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.5);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.my-card-wrapper:hover {
+  transform: scale(0.9);
+}
+
+/* Main action row: info left, buttons right */
+.action-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
 }
 
 .bet-info {
   display: flex;
-  gap: 16px;
-  margin-bottom: 8px;
-  padding-bottom: 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  gap: 12px;
+  flex-shrink: 0;
 }
 
 .bet-info-item {
   display: flex;
   align-items: center;
-  gap: 4px;
-  font-size: 12px;
+  gap: 3px;
+  font-size: 11px;
   color: rgba(255, 255, 255, 0.7);
 }
 
@@ -420,6 +523,7 @@ export default {
   display: flex;
   gap: 6px;
   align-items: center;
+  margin-right: 80px;  /* 80px right margin as requested */
 }
 
 .action-btn {

@@ -1,5 +1,5 @@
 <template>
-  <div v-if="visible" class="settlement-modal-overlay" @click.self="handleOverlayClick">
+  <div v-if="modelValue" class="settlement-modal-overlay" @click.self="handleOverlayClick">
     <div class="settlement-modal glass-effect">
       <div class="modal-header">
         <h2 class="modal-title">{{ title }}</h2>
@@ -18,12 +18,33 @@
           </div>
         </div>
         
+        <!-- 本局玩家牌面列表 -->
+        <div v-if="!isFinalSettlement && roundPlayers && roundPlayers.length > 0" class="round-players-section">
+          <div class="round-players-title">本局玩家</div>
+          <div class="round-players-list">
+            <div 
+              v-for="player in roundPlayers" 
+              :key="player.userId"
+              class="round-player-item"
+              :class="{ 'is-winner': player.result === 'winner' }"
+            >
+              <div class="player-name">{{ player.nickname }}</div>
+              <div class="player-cards">
+                <span v-for="(card, idx) in player.cards" :key="idx" class="card-item" :class="getCardColorClass(card)">
+                  {{ card.suit }}{{ formatCardRank(card.rank) }}
+                </span>
+              </div>
+              <div class="player-card-type">{{ player.cardType }}</div>
+            </div>
+          </div>
+        </div>
+        
         <!-- 最终结算 - 显示所有玩家结果 -->
         <div v-else-if="isFinalSettlement" class="final-results">
           <div class="results-title">最终结算</div>
           <div class="players-results">
             <div 
-              v-for="(player, index) in playersResults" 
+              v-for="(player, index) in sortedPlayersResults" 
               :key="player.userId"
               class="player-result-item"
               :class="{ 'is-winner': index === 0 }"
@@ -31,6 +52,7 @@
               <div class="player-rank">{{ index + 1 }}</div>
               <div class="player-info">
                 <div class="player-name">{{ player.nickname }}</div>
+                <div class="player-final-gold">💰 {{ player.roomGold }}</div>
                 <div class="player-gold-change" :class="player.goldChange >= 0 ? 'positive' : 'negative'">
                   {{ player.goldChange >= 0 ? '+' : '' }}{{ player.goldChange }}
                 </div>
@@ -41,12 +63,32 @@
       </div>
       
       <div class="modal-footer">
+        <div v-if="timeLeft > 0 && !isFinalSettlement" class="auto-start-timer">
+          {{ timeLeft }}秒后自动开始下一局
+        </div>
+        <div v-if="!isFinalSettlement && confirmations" class="confirmations-info">
+          <div class="confirmations-progress">
+            <span class="confirmations-text">等待玩家确认: {{ confirmedCount }}/{{ totalCount }}</span>
+          </div>
+          <div class="confirmations-list">
+            <div 
+              v-for="(confirmed, userId) in confirmations" 
+              :key="userId"
+              class="confirmation-item"
+              :class="{ confirmed: confirmed }"
+            >
+              <span class="confirmation-status">{{ confirmed ? '✓' : '○' }}</span>
+              <span class="confirmation-name">{{ getPlayerName(userId) }}</span>
+            </div>
+          </div>
+        </div>
         <button 
           v-if="!isFinalSettlement" 
           @click="handleContinue" 
           class="action-button continue-button"
+          :disabled="hasConfirmed"
         >
-          继续游戏
+          {{ hasConfirmed ? '已确认' : '继续游戏' }}
         </button>
         <button 
           v-else 
@@ -61,10 +103,13 @@
 </template>
 
 <script>
+import { computed } from 'vue';
+import { useAuthStore } from '@/stores/auth';
+
 export default {
   name: 'SettlementModal',
   props: {
-    visible: {
+    modelValue: {
       type: Boolean,
       default: false
     },
@@ -87,28 +132,123 @@ export default {
     totalRounds: {
       type: Number,
       default: 0
+    },
+    confirmations: {
+      type: Object,
+      default: null
+    },
+    players: {
+      type: Array,
+      default: () => []
+    },
+    roundPlayers: {
+      type: Array,
+      default: () => []
+    },
+    settlementDeadline: {
+      type: [String, Date],
+      default: null
     }
   },
-  computed: {
-    title() {
-      if (this.isFinalSettlement) {
-        return '游戏结束';
-      }
-      return `第 ${this.currentRound} 局结算`;
+  emits: ['update:modelValue', 'continue', 'exit'],
+  setup(props) {
+    const authStore = useAuthStore();
+    
+    // ... existing setup ...
+    const confirmedCount = computed(() => {
+      if (!props.confirmations) return 0;
+      return Object.values(props.confirmations).filter(Boolean).length;
+    });
+    
+    const totalCount = computed(() => {
+      if (!props.confirmations) return 0;
+      return Object.keys(props.confirmations).length;
+    });
+    
+    const hasConfirmed = computed(() => {
+      if (!props.confirmations || !authStore.user) return false;
+      const userId = authStore.user.id?.toString ? authStore.user.id.toString() : authStore.user.id;
+      return props.confirmations[userId] === true;
+    });
+    
+    return {
+      confirmedCount,
+      totalCount,
+      hasConfirmed
+    };
+  },
+  data() {
+    return {
+      timerInterval: null,
+      timeLeft: 0
+    };
+  },
+  mounted() {
+    this.checkTimer();
+  },
+  beforeUnmount() {
+    this.clearTimer();
+  },
+  watch: {
+    settlementDeadline: {
+      handler() {
+        this.checkTimer();
+      },
+      immediate: true
     }
   },
   methods: {
+    checkTimer() {
+      this.clearTimer();
+      if (this.settlementDeadline && new Date(this.settlementDeadline) > new Date()) {
+        this.startTimer();
+      } else {
+        this.timeLeft = 0;
+      }
+    },
+    startTimer() {
+      if (!this.settlementDeadline) return;
+      
+      const deadline = new Date(this.settlementDeadline).getTime();
+      const update = () => {
+        const now = Date.now();
+        const diff = Math.ceil((deadline - now) / 1000);
+        this.timeLeft = diff > 0 ? diff : 0;
+        
+        if (this.timeLeft <= 0) {
+          this.clearTimer();
+        }
+      };
+      
+      update();
+      this.timerInterval = setInterval(update, 1000);
+    },
+    clearTimer() {
+      if (this.timerInterval) {
+        clearInterval(this.timerInterval);
+        this.timerInterval = null;
+      }
+    },
     handleOverlayClick() {
-      // 点击遮罩层不关闭，强制用户点击按钮
     },
     handleClose() {
-      // 关闭按钮不直接关闭，强制用户点击继续或退出
     },
     handleContinue() {
       this.$emit('continue');
     },
     handleExit() {
       this.$emit('exit');
+    },
+    getPlayerName(userId) {
+      const player = this.players.find(p => p.userId === userId);
+      return player ? player.nickname : userId;
+    },
+    formatCardRank(rank) {
+      const rankMap = { 11: 'J', 12: 'Q', 13: 'K', 14: 'A' };
+      return rankMap[rank] || rank;
+    },
+    getCardColorClass(card) {
+      return (card.suit === '♥' || card.suit === '♦') ? 'red-card' : 'black-card';
     }
   }
 };
@@ -132,6 +272,7 @@ export default {
 .settlement-modal {
   width: 90%;
   max-width: 500px;
+  max-height: 90vh;
   border-radius: 20px;
   background: rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(20px);
@@ -139,6 +280,8 @@ export default {
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
   overflow: hidden;
   animation: modalSlideIn 0.3s ease-out;
+  display: flex;
+  flex-direction: column;
 }
 
 @keyframes modalSlideIn {
@@ -158,6 +301,7 @@ export default {
   align-items: center;
   padding: 20px 25px;
   border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
 }
 
 .modal-title {
@@ -186,8 +330,11 @@ export default {
   padding: 30px 25px;
   min-height: 200px;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  overflow-y: auto;
+  flex: 1;
 }
 
 .winner-section {
@@ -336,6 +483,58 @@ export default {
 .modal-footer {
   padding: 20px 25px;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
+  flex-shrink: 0;
+}
+
+.confirmations-info {
+  margin-bottom: 15px;
+}
+
+.confirmations-progress {
+  text-align: center;
+  margin-bottom: 12px;
+}
+
+.confirmations-text {
+  font-size: 14px;
+  color: #b2b2b2;
+}
+
+.confirmations-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: center;
+}
+
+.confirmation-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  transition: all 0.3s ease;
+}
+
+.confirmation-item.confirmed {
+  background: rgba(0, 184, 148, 0.15);
+  border-color: rgba(0, 184, 148, 0.3);
+}
+
+.confirmation-status {
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.confirmation-item.confirmed .confirmation-status {
+  color: #00b894;
+}
+
+.confirmation-name {
+  font-size: 13px;
+  color: #fff;
 }
 
 .action-button {
@@ -369,5 +568,93 @@ export default {
   background: linear-gradient(135deg, #c0392b, #a93226);
   transform: translateY(-2px);
   box-shadow: 0 5px 20px rgba(231, 76, 60, 0.4);
+}
+
+/* 新增样式 */
+.round-players-section {
+  width: 100%;
+  margin-top: 20px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 12px;
+  padding: 15px;
+}
+
+.round-players-title {
+  color: #a0a0a0;
+  font-size: 14px;
+  margin-bottom: 10px;
+  text-align: left;
+}
+
+.round-players-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.round-player-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 8px;
+}
+
+.round-player-item.is-winner {
+  background: rgba(0, 184, 148, 0.15);
+  border: 1px solid rgba(0, 184, 148, 0.3);
+}
+
+.player-cards {
+  display: flex;
+  gap: 4px;
+}
+
+.card-item {
+  background: #fff;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: bold;
+  min-width: 24px;
+  text-align: center;
+}
+
+.card-item.red-card {
+  color: #ff4757;
+}
+
+.card-item.black-card {
+  color: #2f3542;
+}
+
+.player-card-type {
+  font-size: 12px;
+  color: #ffd700;
+  width: 60px;
+  text-align: right;
+}
+
+.player-final-gold {
+  color: #ffd700;
+  font-weight: bold;
+  margin-right: 15px;
+}
+
+/* 即使在非最终结算页面，也需要调整 modal-body 布局 */
+.modal-body {
+  flex: 1;
+  overflow-y: auto;
+}
+
+.auto-start-timer {
+  width: 100%;
+  text-align: center;
+  color: #a0a0a0;
+  font-size: 13px;
+  margin-bottom: 10px;
 }
 </style>

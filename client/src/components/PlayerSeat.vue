@@ -15,11 +15,15 @@
         <div class="player-left">
           <div class="player-avatar">
             <div class="avatar-placeholder">👤</div>
+            <div v-if="player.hasSeenCards" class="seen-indicator" title="已看牌">👀</div>
           </div>
         </div>
         <div class="player-right">
           <!-- <div class="player-gold">💰 {{ player.roomGold || 0 }}</div> -->
-          <div class="player-name">{{ player.nickname || '未知玩家' }}</div>
+          <div class="player-name">
+            {{ player.nickname || '未知玩家' }}
+            <span v-if="timeLeft > 0 && isActive" class="turn-timer">({{ timeLeft }}s)</span>
+          </div>
           <div class="player-status" :class="player.status || 'waiting'">
             {{ getStatusText(player.status) }}
           </div>
@@ -28,7 +32,12 @@
     </div>
     
     <!-- 玩家牌区域（不带边框） -->
-    <div v-if="player.cards && player.cards.length > 0" class="player-cards">
+    <div 
+      v-if="player.cards && player.cards.length > 0" 
+      class="player-cards"
+      :class="{ 'clickable': isSelf && shouldShowCardFace }"
+      @click.stop="handleCardClick"
+    >
       <Card
         v-for="(card, index) in validCards"
         :key="`card-${index}-${card.suit}-${card.rank}`"
@@ -76,6 +85,10 @@ export default {
     },
     currentPlayerId: {
       type: String,
+      default: null
+    },
+    turnDeadline: {
+      type: [String, Date],
       default: null
     }
   },
@@ -147,7 +160,64 @@ export default {
   //     immediate: true
   //   }
   // },
+  data() {
+    return {
+      timerInterval: null,
+      timeLeft: 0
+    };
+  },
+  mounted() {
+    this.checkTimer();
+  },
+  beforeUnmount() {
+    this.clearTimer();
+  },
+  watch: {
+    isActive: {
+      handler() {
+        this.checkTimer();
+      },
+      immediate: true
+    },
+    turnDeadline: {
+      handler() {
+        this.checkTimer();
+      },
+      immediate: true
+    }
+  },
   methods: {
+    checkTimer() {
+      this.clearTimer();
+      if (this.isActive && this.turnDeadline && new Date(this.turnDeadline) > new Date()) {
+        this.startTimer();
+      } else {
+        this.timeLeft = 0;
+      }
+    },
+    startTimer() {
+      if (!this.turnDeadline) return;
+      
+      const deadline = new Date(this.turnDeadline).getTime();
+      const update = () => {
+        const now = Date.now();
+        const diff = Math.ceil((deadline - now) / 1000);
+        this.timeLeft = diff > 0 ? diff : 0;
+        
+        if (this.timeLeft <= 0) {
+          this.clearTimer();
+        }
+      };
+      
+      update();
+      this.timerInterval = setInterval(update, 1000);
+    },
+    clearTimer() {
+      if (this.timerInterval) {
+        clearInterval(this.timerInterval);
+        this.timerInterval = null;
+      }
+    },
     getStatusText(status) {
       // 如果玩家状态是playing，且是当前可操作玩家，则显示"下注中"
       if (status === 'playing' && this.currentPlayerId && 
@@ -167,6 +237,18 @@ export default {
         'busted': '已出局'
       };
       return statusMap[status] || status;
+    },
+    handleCardClick() {
+      console.log('PlayerSeat: Card clicked', { 
+        isSelf: this.isSelf, 
+        shouldShowCardFace: this.shouldShowCardFace,
+        hasSeenCards: this.player?.hasSeenCards 
+      });
+      // 只有自己且已看牌（显示牌面）时，点击才触发
+      if (this.isSelf && this.shouldShowCardFace) {
+        console.log('PlayerSeat: Emitting card-click');
+        this.$emit('card-click');
+      }
     }
   }
 };
@@ -307,10 +389,48 @@ export default {
   display: flex;
   gap: 3px;
   align-self: center;
+  transition: transform 0.2s;
+}
+
+.player-cards.clickable {
+  cursor: pointer;
+}
+
+.player-cards.clickable:hover {
+  transform: scale(1.05);
 }
 
 .player-card {
   width: 30px;
   height: 45px;
+}
+
+.seen-indicator {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  background: rgba(0, 0, 0, 0.6);
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  z-index: 5;
+}
+
+.turn-timer {
+  color: #ff9f43;
+  font-weight: bold;
+  margin-left: 5px;
+  animation: pulse-red 1s infinite;
+}
+
+@keyframes pulse-red {
+  0% { color: #ff9f43; }
+  50% { color: #ff6b6b; }
+  100% { color: #ff9f43; }
 }
 </style>

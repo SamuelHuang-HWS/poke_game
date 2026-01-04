@@ -273,4 +273,79 @@ export default {
     margin: 0 10px;
   }
 }
+
+/* 移动端横屏适配 */
+@media screen and (orientation: landscape) and (max-height: 600px) {
+  .create-room-container {
+    padding-bottom: 20px;
+    height: 100vh;
+    overflow-y: auto;
+  }
+
+  .navbar {
+    padding: 5px 15px;
+    flex-direction: row; /* 强制横向 */
+    min-height: 40px;
+  }
+  
+  .nav-center {
+    flex: 1;
+    text-align: center;
+  }
+  
+  .title {
+    font-size: 18px;
+    margin: 0;
+  }
+
+  .form-section {
+    padding: 10px 20px;
+    height: auto;
+  }
+
+  .form-container {
+    padding: 15px 20px;
+    max-width: 600px;
+    display: flex;
+    flex-direction: row;
+    gap: 20px;
+    align-items: flex-start;
+  }
+
+  .room-form {
+    display: grid;
+    grid-template-columns: 1fr 1fr; /* 双列布局 */
+    gap: 15px;
+    width: 100%;
+  }
+
+  .form-group {
+    margin-bottom: 0;
+  }
+  
+  /* 让密码框和按钮占据整行，或者调整布局 */
+  .form-group:nth-child(3) {
+    grid-column: 1 / -1;
+  }
+  
+  .create-button {
+    grid-column: 1 / -1;
+    margin-top: 0;
+    padding: 12px;
+  }
+
+  .form-label {
+    font-size: 14px;
+    margin-bottom: 4px;
+  }
+
+  .form-input, .form-select {
+    padding: 10px;
+    font-size: 14px;
+  }
+  
+  .form-hint {
+    display: none; /* 隐藏提示以节省空间 */
+  }
+}
 </style>

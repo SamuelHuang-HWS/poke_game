@@ -6,12 +6,17 @@ const Joi = require("joi");
  */
 function validateRegister(req, res, next) {
   const schema = Joi.object({
-    username: Joi.string().alphanum().min(2).max(20).required().messages({
-      "string.alphanum": "用户名只能包含字母和数字",
-      "string.min": "用户名长度不能少于2位",
-      "string.max": "用户名长度不能超过20位",
-      "any.required": "用户名不能为空",
-    }),
+    username: Joi.string()
+      .pattern(/^[\u4e00-\u9fa5a-zA-Z0-9]+$/)
+      .min(2)
+      .max(20)
+      .required()
+      .messages({
+        "string.pattern.base": "用户名只能包含中文、字母和数字",
+        "string.min": "用户名长度不能少于2位",
+        "string.max": "用户名长度不能超过20位",
+        "any.required": "用户名不能为空",
+      }),
     phoneNumber: Joi.string()
       .pattern(/^1[3-9]\d{9}$/)
       .required()
@@ -32,12 +37,17 @@ function validateRegister(req, res, next) {
     // 特殊处理管理员账户
     if (req.body.phoneNumber === "adminhws") {
       const adminSchema = Joi.object({
-        username: Joi.string().alphanum().min(2).max(20).required().messages({
-          "string.alphanum": "用户名只能包含字母和数字",
-          "string.min": "用户名长度不能少于2位",
-          "string.max": "用户名长度不能超过20位",
-          "any.required": "用户名不能为空",
-        }),
+        username: Joi.string()
+          .pattern(/^[\u4e00-\u9fa5a-zA-Z0-9]+$/)
+          .min(2)
+          .max(20)
+          .required()
+          .messages({
+            "string.pattern.base": "用户名只能包含中文、字母和数字",
+            "string.min": "用户名长度不能少于2位",
+            "string.max": "用户名长度不能超过20位",
+            "any.required": "用户名不能为空",
+          }),
         phoneNumber: Joi.string().required(),
         password: Joi.string().min(6).max(20).required().messages({
           "string.min": "密码长度不能少于6位",

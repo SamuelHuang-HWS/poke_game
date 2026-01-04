@@ -63,7 +63,9 @@
           :position-index="player.positionIndex"
           :total-players="player.totalPlayers"
           :current-player-id="currentPlayerId"
+          :turn-deadline="game?.currentTurnDeadline"
           class="player-seat"
+          @card-click="() => { console.log('GameBoard: Received card-click, emitting view-hand'); $emit('view-hand'); }"
         />
       </div>
     </div>
@@ -80,6 +82,7 @@ export default {
   components: {
     PlayerSeat
   },
+  emits: ['view-hand'],
   props: {
     room: {
       type: Object,

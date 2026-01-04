@@ -1,7 +1,7 @@
 {
-  "name": "poke-game-platform",
+  "name": "poker-verse",
   "version": "1.0.0",
-  "description": "炸金花游戏平台",
+  "description": "PokerVerse Game Platform",
   "main": "server/index.js",
   "scripts": {
     "dev": "concurrently \"npm run server:dev\" \"npm run client:dev\"",
